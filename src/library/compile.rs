@@ -38,7 +38,6 @@ pub fn compile(stage: &Stage, src_file: &str) {
 
     let mut asm_filename = PathBuf::from(src_file);
     asm_filename.set_extension("s");
-    println!("Emitting assembly to {}", asm_filename.to_string_lossy());
     let mut emitter =
         CodeEmitter::new(current_platform(), &asm_filename.to_string_lossy()).unwrap();
     emitter.emit(&asm_ast).unwrap();

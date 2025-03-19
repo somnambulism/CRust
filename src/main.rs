@@ -22,9 +22,6 @@ fn validate_extension(filename: &str) {
 fn replace_extension(filename: &str, new_extension: &str) -> String {
     let mut asm_filename = PathBuf::from(filename);
     asm_filename.set_extension(new_extension);
-
-    println!("{}", asm_filename.to_string_lossy());
-
     format!("{}", asm_filename.to_string_lossy())
 }
 
