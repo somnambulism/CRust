@@ -110,3 +110,43 @@ fn count_leading_ws(s: &str) -> Option<usize> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_whitespace() {
+        let lexer = Lexer::new();
+        assert_eq!(lexer.lex("  return").unwrap(), vec![Token::KWReturn]);
+    }
+
+    #[test]
+    fn trailing_whitespace() {
+        let lexer = Lexer::new();
+        assert_eq!(
+            lexer.lex("0;\t\n").unwrap(),
+            vec![Token::Constant(0), Token::Semicolon]
+        );
+    }
+
+    #[test]
+    fn a_full_program() {
+        let lexer = Lexer::new();
+        assert_eq!(
+            lexer.lex("int main(void){return 0;}").unwrap(),
+            vec![
+                Token::KWInt,
+                Token::Identifier("main".to_string()),
+                Token::OpenParen,
+                Token::KWVoid,
+                Token::CloseParen,
+                Token::OpenBrace,
+                Token::KWReturn,
+                Token::Constant(0),
+                Token::Semicolon,
+                Token::CloseBrace,
+            ]
+        )
+    }
+}

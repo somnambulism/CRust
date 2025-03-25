@@ -72,3 +72,37 @@ impl Parser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expression() {
+        let mut parser = Parser::new(vec![Token::Constant(100)]);
+        assert_eq!(parser.parse_exp().unwrap(), Exp::Constant(100));
+    }
+
+    #[test]
+    fn statement() {
+        let mut parser = Parser::new(vec![Token::KWReturn, Token::Constant(4), Token::Semicolon]);
+        assert_eq!(
+            parser.parse_statement().unwrap(),
+            Statement::Return(Exp::Constant(4))
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn error() {
+        let mut parser = Parser::new(vec![Token::KWInt]);
+        let _ = parser.parse_program();
+    }
+
+    #[test]
+    fn empty() {
+        let mut parser = Parser::new(vec![]);
+        let result = parser.parse_program();
+        assert!(result.is_err());
+    }
+}
