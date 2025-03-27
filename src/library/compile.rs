@@ -1,13 +1,18 @@
+use std::io::Write;
 use std::{
-    fs,
-    path::{Path, PathBuf},
+    fs::{self, File},
+    path::PathBuf,
 };
 
 use crate::library::{emit::CodeEmitter, lex::Lexer, parse::Parser, settings::current_platform};
 
-use super::{codegen, settings::Stage};
+use super::{
+    backend::{codegen, instruction_fixup, replace_pseudos},
+    settings::Stage,
+    tacky_gen,
+};
 
-pub fn compile(stage: &Stage, src_file: &str) {
+pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
     // Read file
     let source = fs::read_to_string(src_file).expect("Failed to read source file");
 
@@ -30,7 +35,31 @@ pub fn compile(stage: &Stage, src_file: &str) {
         return;
     }
 
-    let asm_ast = codegen::generate(ast);
+    // Convert the AST to TACKY
+    let tacky = tacky_gen::generate(ast);
+    if debug {
+        let mut tacky_filename = PathBuf::from(src_file);
+        tacky_filename.set_extension("debug.tacky");
+        let mut writer = File::create(tacky_filename).unwrap();
+        let _ = writeln!(writer, "{:#?}", tacky);
+    }
+
+    if *stage == Stage::Tacky {
+        return;
+    }
+
+    // 1. Convert TACKY to assembly
+    let asm_ast = codegen::generate(tacky);
+    if debug {
+        let mut prealloc_filename = PathBuf::from(src_file);
+        prealloc_filename.set_extension("prealloc.debug.s");
+        let mut writer = File::create(prealloc_filename).unwrap();
+        let _ = writeln!(writer, "{:#?}", asm_ast);
+    }
+    // 2. Replace pseudoregisters with Stack operands
+    let (asm_ast1, stack_size) = replace_pseudos::replace_pseudos(asm_ast);
+    // 3. Fixup instructions
+    let asm_ast2 = instruction_fixup::fixup_program(stack_size, asm_ast1);
 
     if *stage == Stage::Codegen {
         return;
@@ -40,5 +69,5 @@ pub fn compile(stage: &Stage, src_file: &str) {
     asm_filename.set_extension("s");
     let mut emitter =
         CodeEmitter::new(current_platform(), &asm_filename.to_string_lossy()).unwrap();
-    emitter.emit(&asm_ast).unwrap();
+    emitter.emit(&asm_ast2).unwrap();
 }

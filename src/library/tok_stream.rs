@@ -20,11 +20,14 @@ impl TokenStream {
             .ok_or_else(|| "End of stream".to_string())
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.tokens.clone().count() == 0
+    pub fn peek(&self) -> Result<&Token, String> {
+        self.tokens
+            .as_slice()
+            .first()
+            .ok_or_else(|| "End of steram".to_string())
     }
 
-    pub fn from_list(tokens: Vec<Token>) -> Self {
-        Self::new(tokens)
+    pub fn is_empty(&self) -> bool {
+        self.tokens.clone().count() == 0
     }
 }

@@ -15,4 +15,7 @@ pub enum Token {
     OpenBrace,
     CloseBrace,
     Semicolon,
+    Hyphen,
+    DoubleHyphen,
+    Tilde,
 }

@@ -4,21 +4,26 @@ pub enum UnaryOperator {
     Negate,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Exp {
+#[derive(Clone, Debug, PartialEq)]
+pub enum TackyVal {
     Constant(i32),
-    Unary(UnaryOperator, Box<Exp>),
+    Var(String),
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Statement {
-    Return(Exp),
+pub enum Instruction {
+    Return(TackyVal),
+    Unary {
+        op: UnaryOperator,
+        src: TackyVal,
+        dst: TackyVal,
+    },
 }
 
 #[derive(Debug, PartialEq)]
 pub struct FunctionDefinition {
     pub name: String,
-    pub body: Statement,
+    pub body: Vec<Instruction>,
 }
 
 #[derive(Debug, PartialEq)]

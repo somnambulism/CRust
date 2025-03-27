@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Result, Write};
 
-use super::assembly::{FunctionDefinition, Program};
+use super::assembly::{FunctionDefinition, Program, Reg, UnaryOperator};
 use super::{
     assembly::{Instruction, Operand},
     settings::Target,
@@ -20,8 +20,12 @@ impl CodeEmitter {
 
     fn show_operand(&self, operand: &Operand) -> String {
         match operand {
-            Operand::Register => "%eax".to_string(),
+            Operand::Reg(Reg::AX) => "%eax".to_string(),
+            Operand::Reg(Reg::R10) => "%r10d".to_string(),
             Operand::Imm(i) => format!("${}", i),
+            Operand::Stack(i) => format!("{}(%rbp)", i),
+            // printing out pseudoregister is only for debugging
+            Operand::Pseudo(name) => format!("%{}", name),
         }
     }
 
@@ -29,6 +33,13 @@ impl CodeEmitter {
         match self.platform {
             Target::OsX => format!("_{}", name),
             _ => name.to_string(),
+        }
+    }
+
+    fn show_unary_instruction(&self, operator: &UnaryOperator) -> String {
+        match operator {
+            UnaryOperator::Neg => "negl".to_string(),
+            UnaryOperator::Not => "notl".to_string(),
         }
     }
 
@@ -40,7 +51,14 @@ impl CodeEmitter {
                 self.show_operand(&src),
                 self.show_operand(&dst)
             ),
-            Instruction::Ret => writeln!(self.file, "\tret"),
+            Instruction::Unary(operator, dst) => writeln!(
+                self.file,
+                "\t{} {}",
+                self.show_unary_instruction(operator),
+                self.show_operand(dst)
+            ),
+            Instruction::AllocateStack(i) => writeln!(self.file, "\tsubq ${}, %rsp", i),
+            Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
         }
     }
 
@@ -48,6 +66,8 @@ impl CodeEmitter {
         let label = self.show_label(&function.name);
         writeln!(self.file, "\t.globl {}", label)?;
         writeln!(self.file, "{}:", label)?;
+        writeln!(self.file, "\tpushq %rbp")?;
+        writeln!(self.file, "\tmovq %rsp, %rbp")?;
         if self.platform == Target::Windows {
             writeln!(self.file, "\tcall __main")?;
         }

@@ -43,8 +43,8 @@ fn preprocess(src: &str) -> String {
     output
 }
 
-fn compile(stage: &Stage, preprocessed_src: &str) -> String {
-    compile::compile(&stage, preprocessed_src);
+fn compile(stage: &Stage, preprocessed_src: &str, debug: bool) -> String {
+    compile::compile(&stage, preprocessed_src, debug);
     run_command("rm", &[preprocessed_src]);
     replace_extension(preprocessed_src, "s")
 }
@@ -62,7 +62,7 @@ fn assemble_and_link(src: &str, cleanup: bool) {
 
 fn driver(debug: bool, stage: &Stage, src: &str) {
     let preprocessed_name = preprocess(src);
-    let assembly_name = compile(stage, &preprocessed_name);
+    let assembly_name = compile(stage, &preprocessed_name, debug);
 
     if *stage == Stage::Executable {
         assemble_and_link(&assembly_name, !debug);
@@ -83,6 +83,8 @@ fn main() {
         Stage::Lex
     } else if args.contains(&"--parse".to_string()) {
         Stage::Parse
+    } else if args.contains(&"--tacky".to_string()) {
+        Stage::Tacky
     } else if args.contains(&"--codegen".to_string()) {
         Stage::Codegen
     } else if args.contains(&"-S".to_string()) || args.contains(&"-s".to_string()) {

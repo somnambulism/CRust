@@ -7,7 +7,7 @@ pub struct TokenDef {
     converter: fn(&str) -> Token,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MatchDef {
     matched_substring: String,
     matching_token: TokenDef,
@@ -47,6 +47,18 @@ impl Lexer {
             TokenDef {
                 re: Regex::new(r"^;").unwrap(),
                 converter: |_s| Token::Semicolon,
+            },
+            TokenDef {
+                re: Regex::new("^--").unwrap(),
+                converter: |_s| Token::DoubleHyphen,
+            },
+            TokenDef {
+                re: Regex::new("^-").unwrap(),
+                converter: |_s| Token::Hyphen,
+            },
+            TokenDef {
+                re: Regex::new("^~").unwrap(),
+                converter: |_s| Token::Tilde,
             },
         ];
         Lexer { token_defs }
@@ -103,12 +115,8 @@ impl Lexer {
 }
 
 fn count_leading_ws(s: &str) -> Option<usize> {
-    let re = regex::Regex::new(r"^\s+").unwrap();
-    if let Some(mat) = re.find(s) {
-        Some(mat.end())
-    } else {
-        None
-    }
+    let ws_matcher = regex::Regex::new(r"^\s+").unwrap();
+    ws_matcher.find(s).map(|m| m.end())
 }
 
 #[cfg(test)]
@@ -148,5 +156,26 @@ mod tests {
                 Token::CloseBrace,
             ]
         )
+    }
+
+    #[test]
+    fn two_hyphens() {
+        let lexer = Lexer::new();
+        assert_eq!(
+            lexer.lex("- -").unwrap(),
+            vec![Token::Hyphen, Token::Hyphen]
+        );
+    }
+
+    #[test]
+    fn double_hyphen() {
+        let lexer = Lexer::new();
+        assert_eq!(lexer.lex("--").unwrap(), vec![Token::DoubleHyphen]);
+    }
+
+    #[test]
+    fn two_tildes() {
+        let lexer = Lexer::new();
+        assert_eq!(lexer.lex("~~").unwrap(), vec![Token::Tilde, Token::Tilde]);
     }
 }

@@ -1,5 +1,5 @@
 use super::{
-    ast::{Exp, FunctionDefinition, Program, Statement},
+    ast::{Exp, FunctionDefinition, Program, Statement, UnaryOperator},
     tok_stream::TokenStream,
     tokens::Token,
 };
@@ -37,8 +37,34 @@ impl Parser {
         }
     }
 
+    fn parse_unop(&mut self) -> Result<UnaryOperator, String> {
+        match self.tokens.take_token() {
+            Ok(Token::Tilde) => Ok(UnaryOperator::Complement),
+            Ok(Token::Hyphen) => Ok(UnaryOperator::Negate),
+            other => Err(format!(
+                "Expected a unary operator, found {:?}",
+                other.unwrap()
+            )),
+        }
+    }
+
     fn parse_exp(&mut self) -> Result<Exp, String> {
-        self.parse_int()
+        let next_token = self.tokens.peek()?;
+        match next_token {
+            Token::Constant(_) => self.parse_int(),
+            Token::Hyphen | Token::Tilde => {
+                let operator = self.parse_unop()?;
+                let inner_exp = self.parse_exp()?;
+                Ok(Exp::Unary(operator, Box::new(inner_exp)))
+            }
+            Token::OpenParen => {
+                let _ = self.tokens.take_token();
+                let e = self.parse_exp();
+                let _ = self.expect(Token::CloseParen);
+                e
+            }
+            t => Err(format!("Expected an expression, found {:?}", t)),
+        }
     }
 
     fn parse_statement(&mut self) -> Result<Statement, String> {

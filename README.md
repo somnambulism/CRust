@@ -1,5 +1,7 @@
 # Elementary C Compiler Written in Rust
 
+Inspired by [nqcc2](https://github.com/nlsandler/nqcc2)
+
 Hello, drugalyok!
 
 It is a very simple C compiler written in Rust. It still requires [gcc](https://gcc.gnu.org/) for its
@@ -14,6 +16,7 @@ may look like shit to a professional.
 ## Features Implemented to Date
 
 * Compilation of the main function containing a single operator `return <int>`. 😐
+* Support of unary operators `-` (negate) and `~` (bitwise not), may be combined using parentheses: `return -(~4);`
 
 ## Usage
 
