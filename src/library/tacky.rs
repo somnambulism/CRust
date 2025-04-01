@@ -4,6 +4,15 @@ pub enum UnaryOperator {
     Negate,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Mod,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TackyVal {
     Constant(i32),
@@ -16,6 +25,12 @@ pub enum Instruction {
     Unary {
         op: UnaryOperator,
         src: TackyVal,
+        dst: TackyVal,
+    },
+    Binary {
+        op: BinaryOperator,
+        src1: TackyVal,
+        src2: TackyVal,
         dst: TackyVal,
     },
 }

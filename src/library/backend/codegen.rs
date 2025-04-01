@@ -2,12 +2,12 @@ use std::vec;
 
 use crate::library::{
     assembly::{
-        FunctionDefinition as AssemblyFunction, Instruction, Operand, Program as AssemblyProgram,
-        Reg, UnaryOperator,
+        BinaryOperator, FunctionDefinition as AssemblyFunction, Instruction, Operand,
+        Program as AssemblyProgram, Reg, UnaryOperator,
     },
     tacky::{
-        FunctionDefinition, Instruction as TackyInstruction, Program, TackyVal,
-        UnaryOperator as TackyUnaryOp,
+        BinaryOperator as TackyBinaryOp, FunctionDefinition, Instruction as TackyInstruction,
+        Program, TackyVal, UnaryOperator as TackyUnaryOp,
     },
 };
 
@@ -18,10 +18,21 @@ fn convert_val(val: TackyVal) -> Operand {
     }
 }
 
-fn convert_op(op: TackyUnaryOp) -> UnaryOperator {
+fn convert_unop(op: TackyUnaryOp) -> UnaryOperator {
     match op {
         TackyUnaryOp::Complement => UnaryOperator::Not,
         TackyUnaryOp::Negate => UnaryOperator::Neg,
+    }
+}
+
+fn convert_binop(op: TackyBinaryOp) -> BinaryOperator {
+    match op {
+        TackyBinaryOp::Add => BinaryOperator::Add,
+        TackyBinaryOp::Subtract => BinaryOperator::Sub,
+        TackyBinaryOp::Multiply => BinaryOperator::Mult,
+        TackyBinaryOp::Divide | TackyBinaryOp::Mod => {
+            panic!("Internal error: shouldn't handle division like other binary operators")
+        }
     }
 }
 
@@ -35,13 +46,51 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
             ]
         }
         TackyInstruction::Unary { op, src, dst } => {
-            let asm_op = convert_op(op);
+            let asm_op = convert_unop(op);
             let asm_src = convert_val(src);
             let asm_dst = convert_val(dst);
             vec![
                 Instruction::Mov(asm_src, asm_dst.clone()),
                 Instruction::Unary(asm_op, asm_dst),
             ]
+        }
+        TackyInstruction::Binary {
+            op,
+            src1,
+            src2,
+            dst,
+        } => {
+            let asm_src1 = convert_val(src1);
+            let asm_src2 = convert_val(src2);
+            let asm_dst = convert_val(dst);
+            match op {
+                // Division/modulo
+                TackyBinaryOp::Divide | TackyBinaryOp::Mod => {
+                    let result_reg = if op == TackyBinaryOp::Divide {
+                        Reg::AX
+                    } else {
+                        Reg::DX
+                    };
+                    vec![
+                        Instruction::Mov(asm_src1, Operand::Reg(Reg::AX)),
+                        Instruction::Cdq,
+                        Instruction::Idiv(asm_src2),
+                        Instruction::Mov(Operand::Reg(result_reg), asm_dst),
+                    ]
+                }
+                // Addition/subtraction/multiplication
+                _ => {
+                    let asm_op = convert_binop(op);
+                    vec![
+                        Instruction::Mov(asm_src1, asm_dst.clone()),
+                        Instruction::Binary {
+                            op: asm_op,
+                            src: asm_src2,
+                            dst: asm_dst,
+                        },
+                    ]
+                }
+            }
         }
     }
 }

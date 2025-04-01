@@ -18,4 +18,8 @@ pub enum Token {
     Hyphen,
     DoubleHyphen,
     Tilde,
+    Plus,
+    Star,
+    Slash,
+    Percent,
 }

@@ -43,7 +43,20 @@ impl ReplacementState {
                 let new_dst = self.replace_operand(dst);
                 Instruction::Unary(op, new_dst)
             }
-            Instruction::Ret => Instruction::Ret,
+            Instruction::Binary { op, src, dst } => {
+                let new_src = self.replace_operand(src);
+                let new_dst = self.replace_operand(dst);
+                Instruction::Binary {
+                    op,
+                    src: new_src,
+                    dst: new_dst,
+                }
+            }
+            Instruction::Idiv(op) => {
+                let new_op = self.replace_operand(op);
+                Instruction::Idiv(new_op)
+            }
+            Instruction::Ret | Instruction::Cdq => instruction,
             Instruction::AllocateStack(_) => {
                 panic!("Internal error: AllocateStack shouldn't be present at this point")
             }
@@ -53,7 +66,7 @@ impl ReplacementState {
 
 fn replace_pseudos_in_function(func: FunctionDefinition) -> (FunctionDefinition, i32) {
     let mut state = ReplacementState::new();
-    let fixed_instuctions = func
+    let fixed_instructions = func
         .instructions
         .into_iter()
         .map(|instr| state.replace_pseudos_in_instruction(instr))
@@ -61,7 +74,7 @@ fn replace_pseudos_in_function(func: FunctionDefinition) -> (FunctionDefinition,
     (
         FunctionDefinition {
             name: func.name,
-            instructions: fixed_instuctions,
+            instructions: fixed_instructions,
         },
         state.current_offset,
     )

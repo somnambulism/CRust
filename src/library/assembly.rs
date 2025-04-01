@@ -1,7 +1,9 @@
 #[derive(Clone, Debug)]
 pub enum Reg {
     AX,
+    DX,
     R10,
+    R11,
 }
 
 #[derive(Clone, Debug)]
@@ -19,9 +21,23 @@ pub enum UnaryOperator {
 }
 
 #[derive(Clone, Debug)]
+pub enum BinaryOperator {
+    Add,
+    Sub,
+    Mult,
+}
+
+#[derive(Clone, Debug)]
 pub enum Instruction {
     Mov(Operand, Operand),
     Unary(UnaryOperator, Operand),
+    Binary {
+        op: BinaryOperator,
+        src: Operand,
+        dst: Operand,
+    },
+    Idiv(Operand),
+    Cdq,
     AllocateStack(i32),
     Ret,
 }

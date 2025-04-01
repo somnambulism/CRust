@@ -60,6 +60,22 @@ impl Lexer {
                 re: Regex::new("^~").unwrap(),
                 converter: |_s| Token::Tilde,
             },
+            TokenDef {
+                re: Regex::new(r"^\+").unwrap(),
+                converter: |_s| Token::Plus,
+            },
+            TokenDef {
+                re: Regex::new(r"^\*").unwrap(),
+                converter: |_s| Token::Star,
+            },
+            TokenDef {
+                re: Regex::new("^/").unwrap(),
+                converter: |_s| Token::Slash,
+            },
+            TokenDef {
+                re: Regex::new("^%").unwrap(),
+                converter: |_s| Token::Percent,
+            },
         ];
         Lexer { token_defs }
     }

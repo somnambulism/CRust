@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Result, Write};
 
-use super::assembly::{FunctionDefinition, Program, Reg, UnaryOperator};
+use super::assembly::{BinaryOperator, FunctionDefinition, Program, Reg, UnaryOperator};
 use super::{
     assembly::{Instruction, Operand},
     settings::Target,
@@ -21,7 +21,9 @@ impl CodeEmitter {
     fn show_operand(&self, operand: &Operand) -> String {
         match operand {
             Operand::Reg(Reg::AX) => "%eax".to_string(),
+            Operand::Reg(Reg::DX) => "%edx".to_string(),
             Operand::Reg(Reg::R10) => "%r10d".to_string(),
+            Operand::Reg(Reg::R11) => "%r11d".to_string(),
             Operand::Imm(i) => format!("${}", i),
             Operand::Stack(i) => format!("{}(%rbp)", i),
             // printing out pseudoregister is only for debugging
@@ -43,6 +45,14 @@ impl CodeEmitter {
         }
     }
 
+    fn show_binary_instruction(&self, operator: &BinaryOperator) -> String {
+        match operator {
+            BinaryOperator::Add => "addl".to_string(),
+            BinaryOperator::Sub => "subl".to_string(),
+            BinaryOperator::Mult => "imull".to_string(),
+        }
+    }
+
     fn emit_instruction(&mut self, instruction: &Instruction) -> Result<()> {
         match instruction {
             Instruction::Mov(src, dst) => writeln!(
@@ -57,6 +67,17 @@ impl CodeEmitter {
                 self.show_unary_instruction(operator),
                 self.show_operand(dst)
             ),
+            Instruction::Binary { op, src, dst } => writeln!(
+                self.file,
+                "\t{} {}, {}",
+                self.show_binary_instruction(op),
+                self.show_operand(src),
+                self.show_operand(dst)
+            ),
+            Instruction::Idiv(operand) => {
+                writeln!(self.file, "\tidivl {}", self.show_operand(operand))
+            }
+            Instruction::Cdq => writeln!(self.file, "\tcdq"),
             Instruction::AllocateStack(i) => writeln!(self.file, "\tsubq ${}, %rsp", i),
             Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
         }

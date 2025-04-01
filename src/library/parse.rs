@@ -1,11 +1,19 @@
 use super::{
-    ast::{Exp, FunctionDefinition, Program, Statement, UnaryOperator},
+    ast::{BinaryOperator, Exp, FunctionDefinition, Program, Statement, UnaryOperator},
     tok_stream::TokenStream,
     tokens::Token,
 };
 
 pub struct Parser {
     tokens: TokenStream,
+}
+
+fn get_precedence(token: &Token) -> Option<i32> {
+    match token {
+        Token::Star | Token::Slash | Token::Percent => Some(50),
+        Token::Plus | Token::Hyphen => Some(45),
+        _ => None,
+    }
 }
 
 impl Parser {
@@ -48,28 +56,64 @@ impl Parser {
         }
     }
 
-    fn parse_exp(&mut self) -> Result<Exp, String> {
+    fn parse_binop(&mut self) -> Result<BinaryOperator, String> {
+        match self.tokens.take_token() {
+            Ok(Token::Plus) => Ok(BinaryOperator::Add),
+            Ok(Token::Hyphen) => Ok(BinaryOperator::Subtract),
+            Ok(Token::Star) => Ok(BinaryOperator::Multiply),
+            Ok(Token::Slash) => Ok(BinaryOperator::Divide),
+            Ok(Token::Percent) => Ok(BinaryOperator::Mod),
+            other => Err(format!(
+                "Expected a binary operator, found {:?}",
+                other.unwrap()
+            )),
+        }
+    }
+
+    fn parse_factor(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
         match next_token {
             Token::Constant(_) => self.parse_int(),
             Token::Hyphen | Token::Tilde => {
                 let operator = self.parse_unop()?;
-                let inner_exp = self.parse_exp()?;
+                let inner_exp = self.parse_factor()?;
                 Ok(Exp::Unary(operator, Box::new(inner_exp)))
             }
             Token::OpenParen => {
                 let _ = self.tokens.take_token();
-                let e = self.parse_exp();
+                let e = self.parse_exp(0);
                 let _ = self.expect(Token::CloseParen);
                 e
             }
-            t => Err(format!("Expected an expression, found {:?}", t)),
+            t => Err(format!("Expected a factor, found {:?}", t)),
         }
+    }
+
+    fn parse_exp(&mut self, min_prec: i32) -> Result<Exp, String> {
+        let mut left = self.parse_factor()?;
+
+        while let Ok(next_token) = self.tokens.peek() {
+            if let Some(prec) = get_precedence(&next_token) {
+                if prec < min_prec {
+                    break;
+                }
+
+                // Consume operator
+                let operator = self.parse_binop()?;
+                let right = self.parse_exp(prec + 1)?;
+
+                left = Exp::Binary(operator, Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
     }
 
     fn parse_statement(&mut self) -> Result<Statement, String> {
         self.expect(Token::KWReturn)?;
-        let exp = self.parse_exp()?;
+        let exp = self.parse_exp(0)?;
         self.expect(Token::Semicolon)?;
         Ok(Statement::Return(exp))
     }
@@ -105,8 +149,8 @@ mod tests {
 
     #[test]
     fn expression() {
-        let mut parser = Parser::new(vec![Token::Constant(100)]);
-        assert_eq!(parser.parse_exp().unwrap(), Exp::Constant(100));
+        let mut parser = Parser::new(vec![Token::Constant(100), Token::Semicolon]);
+        assert_eq!(parser.parse_exp(40).unwrap(), Exp::Constant(100));
     }
 
     #[test]
