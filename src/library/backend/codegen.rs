@@ -30,6 +30,11 @@ fn convert_binop(op: TackyBinaryOp) -> BinaryOperator {
         TackyBinaryOp::Add => BinaryOperator::Add,
         TackyBinaryOp::Subtract => BinaryOperator::Sub,
         TackyBinaryOp::Multiply => BinaryOperator::Mult,
+        TackyBinaryOp::And => BinaryOperator::And,
+        TackyBinaryOp::Or => BinaryOperator::Or,
+        TackyBinaryOp::Xor => BinaryOperator::Xor,
+        TackyBinaryOp::LeftShift => BinaryOperator::Sal,
+        TackyBinaryOp::RightShift => BinaryOperator::Sar,
         TackyBinaryOp::Divide | TackyBinaryOp::Mod => {
             panic!("Internal error: shouldn't handle division like other binary operators")
         }
@@ -77,6 +82,21 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                         Instruction::Idiv(asm_src2),
                         Instruction::Mov(Operand::Reg(result_reg), asm_dst),
                     ]
+                }
+                // Bitwise shift
+                TackyBinaryOp::LeftShift | TackyBinaryOp::RightShift => {
+                    let mut result = vec![];
+                    let new_src = Operand::Reg(Reg::CX);
+                    result.push(Instruction::Mov(asm_src2, Operand::Reg(Reg::CX)));
+
+                    result.push(Instruction::Mov(asm_src1, asm_dst.clone()));
+                    result.push(Instruction::Binary {
+                        op: convert_binop(op),
+                        src: new_src,
+                        dst: asm_dst,
+                    });
+
+                    result
                 }
                 // Addition/subtraction/multiplication
                 _ => {

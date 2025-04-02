@@ -14,9 +14,14 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
             Instruction::Mov(Operand::Imm(i), Operand::Reg(Reg::R10)),
             Instruction::Idiv(Operand::Reg(Reg::R10)),
         ],
-        // Add/Sub can't use memory addresses for both operands
+        // Add/Sub/And/Or/Xor can't use memory addresses for both operands
         Instruction::Binary {
-            op: op @ BinaryOperator::Add | op @ BinaryOperator::Sub,
+            op:
+                op @ BinaryOperator::Add
+                | op @ BinaryOperator::Sub
+                | op @ BinaryOperator::And
+                | op @ BinaryOperator::Or
+                | op @ BinaryOperator::Xor,
             src: src @ Operand::Stack(_),
             dst: dst @ Operand::Stack(_),
         } => vec![
@@ -29,13 +34,13 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         ],
         // Destination of Mult can't be in memory
         Instruction::Binary {
-            op: BinaryOperator::Mult,
+            op: op @ BinaryOperator::Mult | op @ BinaryOperator::Sal | op @ BinaryOperator::Sar,
             src,
             dst: dst @ Operand::Stack(_),
         } => vec![
             Instruction::Mov(dst.clone(), Operand::Reg(Reg::R11)),
             Instruction::Binary {
-                op: BinaryOperator::Mult,
+                op,
                 src,
                 dst: Operand::Reg(Reg::R11),
             },

@@ -21,6 +21,7 @@ impl CodeEmitter {
     fn show_operand(&self, operand: &Operand) -> String {
         match operand {
             Operand::Reg(Reg::AX) => "%eax".to_string(),
+            Operand::Reg(Reg::CX) => "%ecx".to_string(),
             Operand::Reg(Reg::DX) => "%edx".to_string(),
             Operand::Reg(Reg::R10) => "%r10d".to_string(),
             Operand::Reg(Reg::R11) => "%r11d".to_string(),
@@ -50,6 +51,11 @@ impl CodeEmitter {
             BinaryOperator::Add => "addl".to_string(),
             BinaryOperator::Sub => "subl".to_string(),
             BinaryOperator::Mult => "imull".to_string(),
+            BinaryOperator::And => "andl".to_string(),
+            BinaryOperator::Or => "orl".to_string(),
+            BinaryOperator::Xor => "xorl".to_string(),
+            BinaryOperator::Sal => "sall".to_string(),
+            BinaryOperator::Sar => "sarl".to_string(),
         }
     }
 

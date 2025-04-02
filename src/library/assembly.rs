@@ -1,6 +1,7 @@
 #[derive(Clone, Debug)]
 pub enum Reg {
     AX,
+    CX,
     DX,
     R10,
     R11,
@@ -25,6 +26,11 @@ pub enum BinaryOperator {
     Add,
     Sub,
     Mult,
+    And,
+    Or,
+    Xor,
+    Sal,
+    Sar,
 }
 
 #[derive(Clone, Debug)]

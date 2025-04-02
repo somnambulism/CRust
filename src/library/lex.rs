@@ -53,6 +53,14 @@ impl Lexer {
                 converter: |_s| Token::DoubleHyphen,
             },
             TokenDef {
+                re: Regex::new("^<<").unwrap(),
+                converter: |_s| Token::LeftShift,
+            },
+            TokenDef {
+                re: Regex::new("^>>").unwrap(),
+                converter: |_s| Token::RightShift,
+            },
+            TokenDef {
                 re: Regex::new("^-").unwrap(),
                 converter: |_s| Token::Hyphen,
             },
@@ -75,6 +83,18 @@ impl Lexer {
             TokenDef {
                 re: Regex::new("^%").unwrap(),
                 converter: |_s| Token::Percent,
+            },
+            TokenDef {
+                re: Regex::new("^&").unwrap(),
+                converter: |_s| Token::Ampersand,
+            },
+            TokenDef {
+                re: Regex::new(r"^\|").unwrap(),
+                converter: |_s| Token::Pipe,
+            },
+            TokenDef {
+                re: Regex::new(r"^\^").unwrap(),
+                converter: |_s| Token::Caret,
             },
         ];
         Lexer { token_defs }

@@ -12,6 +12,10 @@ fn get_precedence(token: &Token) -> Option<i32> {
     match token {
         Token::Star | Token::Slash | Token::Percent => Some(50),
         Token::Plus | Token::Hyphen => Some(45),
+        Token::LeftShift | Token::RightShift => Some(40),
+        Token::Ampersand => Some(35),
+        Token::Caret => Some(30),
+        Token::Pipe => Some(25),
         _ => None,
     }
 }
@@ -63,6 +67,11 @@ impl Parser {
             Ok(Token::Star) => Ok(BinaryOperator::Multiply),
             Ok(Token::Slash) => Ok(BinaryOperator::Divide),
             Ok(Token::Percent) => Ok(BinaryOperator::Mod),
+            Ok(Token::Ampersand) => Ok(BinaryOperator::And),
+            Ok(Token::Pipe) => Ok(BinaryOperator::Or),
+            Ok(Token::Caret) => Ok(BinaryOperator::Xor),
+            Ok(Token::LeftShift) => Ok(BinaryOperator::LeftShift),
+            Ok(Token::RightShift) => Ok(BinaryOperator::RightShift),
             other => Err(format!(
                 "Expected a binary operator, found {:?}",
                 other.unwrap()

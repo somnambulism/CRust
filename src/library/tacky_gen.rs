@@ -21,6 +21,11 @@ fn convert_binop(op: AstBinaryOperator) -> BinaryOperator {
         AstBinaryOperator::Multiply => BinaryOperator::Multiply,
         AstBinaryOperator::Divide => BinaryOperator::Divide,
         AstBinaryOperator::Mod => BinaryOperator::Mod,
+        AstBinaryOperator::And => BinaryOperator::And,
+        AstBinaryOperator::Or => BinaryOperator::Or,
+        AstBinaryOperator::Xor => BinaryOperator::Xor,
+        AstBinaryOperator::LeftShift => BinaryOperator::LeftShift,
+        AstBinaryOperator::RightShift => BinaryOperator::RightShift,
     }
 }
 

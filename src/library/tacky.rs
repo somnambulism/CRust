@@ -11,6 +11,11 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Mod,
+    And,
+    Or,
+    Xor,
+    LeftShift,
+    RightShift,
 }
 
 #[derive(Clone, Debug, PartialEq)]
