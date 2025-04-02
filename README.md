@@ -17,6 +17,13 @@ may look like shit to a professional.
 
 * Compilation of the main function containing a single operator `return <int>`. 😐
 * Support of unary operators `-` (negate) and `~` (bitwise not), may be combined using parentheses: `return -(~4);`
+* Support of binary operators now you can compile programs like this one:
+    ```C
+    int main(void) {
+        return 60 + 2 * (4 - 6 / 3);
+    }
+    ```
+    * Extra: support of bitwise operations (`&`, `|`, `^`) and shifts (`<<`, `>>`).
 
 ## Usage
 
