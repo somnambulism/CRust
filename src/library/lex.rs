@@ -61,6 +61,30 @@ impl Lexer {
                 converter: |_s| Token::RightShift,
             },
             TokenDef {
+                re: Regex::new("^&&").unwrap(),
+                converter: |_s| Token::LogicalAnd,
+            },
+            TokenDef {
+                re: Regex::new(r"^\|\|").unwrap(),
+                converter: |_s| Token::LogicalOr,
+            },
+            TokenDef {
+                re: Regex::new("^==").unwrap(),
+                converter: |_s| Token::DoubleEqual,
+            },
+            TokenDef {
+                re: Regex::new("^!=").unwrap(),
+                converter: |_s| Token::NotEqual,
+            },
+            TokenDef {
+                re: Regex::new("^<=").unwrap(),
+                converter: |_s| Token::LessOrEqual,
+            },
+            TokenDef {
+                re: Regex::new("^>=").unwrap(),
+                converter: |_s| Token::GreaterOrEqual,
+            },
+            TokenDef {
                 re: Regex::new("^-").unwrap(),
                 converter: |_s| Token::Hyphen,
             },
@@ -95,6 +119,18 @@ impl Lexer {
             TokenDef {
                 re: Regex::new(r"^\^").unwrap(),
                 converter: |_s| Token::Caret,
+            },
+            TokenDef {
+                re: Regex::new("^!").unwrap(),
+                converter: |_s| Token::Bang,
+            },
+            TokenDef {
+                re: Regex::new("^<").unwrap(),
+                converter: |_s| Token::LessThan,
+            },
+            TokenDef {
+                re: Regex::new("^>").unwrap(),
+                converter: |_s| Token::GreaterThan,
             },
         ];
         Lexer { token_defs }

@@ -2,7 +2,7 @@ use std::vec;
 
 use crate::library::{
     assembly::{
-        BinaryOperator, FunctionDefinition as AssemblyFunction, Instruction, Operand,
+        BinaryOperator, CondCode, FunctionDefinition as AssemblyFunction, Instruction, Operand,
         Program as AssemblyProgram, Reg, UnaryOperator,
     },
     tacky::{
@@ -22,6 +22,9 @@ fn convert_unop(op: TackyUnaryOp) -> UnaryOperator {
     match op {
         TackyUnaryOp::Complement => UnaryOperator::Not,
         TackyUnaryOp::Negate => UnaryOperator::Neg,
+        TackyUnaryOp::Not => {
+            panic!("Internal error, can't convert TACKY 'not' directly to assembly")
+        }
     }
 }
 
@@ -30,24 +33,61 @@ fn convert_binop(op: TackyBinaryOp) -> BinaryOperator {
         TackyBinaryOp::Add => BinaryOperator::Add,
         TackyBinaryOp::Subtract => BinaryOperator::Sub,
         TackyBinaryOp::Multiply => BinaryOperator::Mult,
-        TackyBinaryOp::And => BinaryOperator::And,
-        TackyBinaryOp::Or => BinaryOperator::Or,
+        TackyBinaryOp::BitwiseAnd => BinaryOperator::And,
+        TackyBinaryOp::BitwiseOr => BinaryOperator::Or,
         TackyBinaryOp::Xor => BinaryOperator::Xor,
         TackyBinaryOp::LeftShift => BinaryOperator::Sal,
         TackyBinaryOp::RightShift => BinaryOperator::Sar,
-        TackyBinaryOp::Divide | TackyBinaryOp::Mod => {
-            panic!("Internal error: shouldn't handle division like other binary operators")
+        TackyBinaryOp::Divide
+        | TackyBinaryOp::Mod
+        | TackyBinaryOp::Equal
+        | TackyBinaryOp::NotEqual
+        | TackyBinaryOp::GreaterOrEqual
+        | TackyBinaryOp::LessOrEqual
+        | TackyBinaryOp::GreaterThan
+        | TackyBinaryOp::LessThan => {
+            panic!("Internal error: not a binary assembly instruction")
         }
+    }
+}
+
+fn convert_cond_code(cond_code: TackyBinaryOp) -> CondCode {
+    match cond_code {
+        TackyBinaryOp::Equal => CondCode::E,
+        TackyBinaryOp::NotEqual => CondCode::NE,
+        TackyBinaryOp::GreaterThan => CondCode::G,
+        TackyBinaryOp::GreaterOrEqual => CondCode::GE,
+        TackyBinaryOp::LessThan => CondCode::L,
+        TackyBinaryOp::LessOrEqual => CondCode::LE,
+        _ => panic!("Internal error: not a condition code"),
     }
 }
 
 fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
     match instruction {
+        TackyInstruction::Copy { src, dst } => {
+            let asm_src = convert_val(src);
+            let asm_dst = convert_val(dst);
+            vec![Instruction::Mov(asm_src, asm_dst)]
+        }
         TackyInstruction::Return(tacky_val) => {
             let asm_val = convert_val(tacky_val);
             vec![
                 Instruction::Mov(asm_val, Operand::Reg(Reg::AX)),
                 Instruction::Ret,
+            ]
+        }
+        TackyInstruction::Unary {
+            op: TackyUnaryOp::Not,
+            src,
+            dst,
+        } => {
+            let asm_src = convert_val(src);
+            let asm_dst = convert_val(dst);
+            vec![
+                Instruction::Cmp(Operand::Imm(0), asm_src),
+                Instruction::Mov(Operand::Imm(0), asm_dst.clone()),
+                Instruction::SetCC(CondCode::E, asm_dst),
             ]
         }
         TackyInstruction::Unary { op, src, dst } => {
@@ -69,6 +109,20 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
             let asm_src2 = convert_val(src2);
             let asm_dst = convert_val(dst);
             match op {
+                // Relational operator
+                TackyBinaryOp::Equal
+                | TackyBinaryOp::NotEqual
+                | TackyBinaryOp::GreaterThan
+                | TackyBinaryOp::GreaterOrEqual
+                | TackyBinaryOp::LessThan
+                | TackyBinaryOp::LessOrEqual => {
+                    let cond_code = convert_cond_code(op);
+                    vec![
+                        Instruction::Cmp(asm_src2, asm_src1),
+                        Instruction::Mov(Operand::Imm(0), asm_dst.clone()),
+                        Instruction::SetCC(cond_code, asm_dst),
+                    ]
+                }
                 // Division/modulo
                 TackyBinaryOp::Divide | TackyBinaryOp::Mod => {
                     let result_reg = if op == TackyBinaryOp::Divide {
@@ -85,18 +139,15 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                 }
                 // Bitwise shift
                 TackyBinaryOp::LeftShift | TackyBinaryOp::RightShift => {
-                    let mut result = vec![];
-                    let new_src = Operand::Reg(Reg::CX);
-                    result.push(Instruction::Mov(asm_src2, Operand::Reg(Reg::CX)));
-
-                    result.push(Instruction::Mov(asm_src1, asm_dst.clone()));
-                    result.push(Instruction::Binary {
-                        op: convert_binop(op),
-                        src: new_src,
-                        dst: asm_dst,
-                    });
-
-                    result
+                    vec![
+                        // Instruction::Mov(asm_src2, Operand::Reg(Reg::CX)),
+                        Instruction::Mov(asm_src1, asm_dst.clone()),
+                        Instruction::Binary {
+                            op: convert_binop(op),
+                            src: asm_src2,
+                            dst: asm_dst,
+                        },
+                    ]
                 }
                 // Addition/subtraction/multiplication
                 _ => {
@@ -112,6 +163,22 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                 }
             }
         }
+        TackyInstruction::Jump(target) => vec![Instruction::Jmp(target)],
+        TackyInstruction::JumpIfZero(cond, target) => {
+            let asm_cond = convert_val(cond);
+            vec![
+                Instruction::Cmp(Operand::Imm(0), asm_cond),
+                Instruction::JmpCC(CondCode::E, target),
+            ]
+        }
+        TackyInstruction::JumpIfNotZero(cond, target) => {
+            let asm_cond = convert_val(cond);
+            vec![
+                Instruction::Cmp(Operand::Imm(0), asm_cond),
+                Instruction::JmpCC(CondCode::NE, target),
+            ]
+        }
+        TackyInstruction::Label(l) => vec![Instruction::Label(l)],
     }
 }
 

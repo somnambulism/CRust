@@ -24,6 +24,12 @@ may look like shit to a professional.
     }
     ```
     * Extra: support of bitwise operations (`&`, `|`, `^`) and shifts (`<<`, `>>`).
+* Support of relational and logical operators:
+    ```C
+    int main(void) {
+        return (0 == 0 && 3 == 2 + 1 > 1) + 1;
+    }
+    ```
 
 ## Usage
 

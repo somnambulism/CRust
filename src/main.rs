@@ -53,7 +53,7 @@ fn assemble_and_link(src: &str, cleanup: bool) {
     let assembly_file = replace_extension(src, "s");
     let output_file = replace_extension(src, "exe");
 
-    run_command("gcc", &[&assembly_file, "-o", &output_file]);
+    run_command("gcc", &["-nostartfiles", "-nostdlib", &assembly_file, "-o", &output_file]);
 
     if cleanup {
         run_command("rm", &[&assembly_file]);
@@ -70,29 +70,36 @@ fn driver(debug: bool, stage: &Stage, src: &str) {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    // Skip first argument (executable name)
+    let args: Vec<String> = env::args().skip(1).collect();
 
-    if args.len() < 2 {
-        eprintln!("Usage: {} <source-file>", args[0]);
-        std::process::exit(1);
+    let mut src_file: Option<String> = None;
+    let mut stage = Stage::Executable;
+    let mut debug = false;
+
+    for arg in &args {
+        if arg == "--lex" {
+            stage = Stage::Lex;
+        } else if arg == "--parse" {
+            stage = Stage::Parse;
+        } else if arg == "--tacky" {
+            stage = Stage::Tacky;
+        } else if arg == "--codegen" {
+            stage = Stage::Codegen;
+        } else if arg == "-S" || arg == "-s" {
+            stage = Stage::Assembly;
+        } else if arg == "-d" {
+            debug = true;
+        } else if src_file.is_none() {
+            // Consider the first argument, which is not a flag, as the source file
+            src_file = Some(arg.clone());
+        }
     }
 
-    let src_file = &args[1];
-
-    let stage = if args.contains(&"--lex".to_string()) {
-        Stage::Lex
-    } else if args.contains(&"--parse".to_string()) {
-        Stage::Parse
-    } else if args.contains(&"--tacky".to_string()) {
-        Stage::Tacky
-    } else if args.contains(&"--codegen".to_string()) {
-        Stage::Codegen
-    } else if args.contains(&"-S".to_string()) || args.contains(&"-s".to_string()) {
-        Stage::Assembly
+    if let Some(src_file) = src_file {
+        driver(debug, &stage, &src_file);
     } else {
-        Stage::Executable
-    };
-    let debug = args.contains(&"-d".to_string());
-
-    driver(debug, &stage, src_file);
+        eprintln!("Usage: <program> [options] <source-file>");
+        std::process::exit(1);
+    }
 }

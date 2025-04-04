@@ -13,9 +13,15 @@ fn get_precedence(token: &Token) -> Option<i32> {
         Token::Star | Token::Slash | Token::Percent => Some(50),
         Token::Plus | Token::Hyphen => Some(45),
         Token::LeftShift | Token::RightShift => Some(40),
-        Token::Ampersand => Some(35),
-        Token::Caret => Some(30),
-        Token::Pipe => Some(25),
+        Token::LessThan | Token::LessOrEqual | Token::GreaterThan | Token::GreaterOrEqual => {
+            Some(35)
+        }
+        Token::DoubleEqual | Token::NotEqual => Some(30),
+        Token::Ampersand => Some(25),
+        Token::Caret => Some(20),
+        Token::Pipe => Some(15),
+        Token::LogicalAnd => Some(10),
+        Token::LogicalOr => Some(5),
         _ => None,
     }
 }
@@ -49,10 +55,12 @@ impl Parser {
         }
     }
 
+    // <unop> ::= "-" | "~" | "!"
     fn parse_unop(&mut self) -> Result<UnaryOperator, String> {
         match self.tokens.take_token() {
             Ok(Token::Tilde) => Ok(UnaryOperator::Complement),
             Ok(Token::Hyphen) => Ok(UnaryOperator::Negate),
+            Ok(Token::Bang) => Ok(UnaryOperator::Not),
             other => Err(format!(
                 "Expected a unary operator, found {:?}",
                 other.unwrap()
@@ -60,6 +68,9 @@ impl Parser {
         }
     }
 
+    // <binop> ::= "-" | "+" | "*" | "/" | "%" | "&" | "|"
+    //          | "<<" | ">>" | "&&" | "||"
+    //          | "==" | "!=" | "<" | "<=" | ">" | ">="
     fn parse_binop(&mut self) -> Result<BinaryOperator, String> {
         match self.tokens.take_token() {
             Ok(Token::Plus) => Ok(BinaryOperator::Add),
@@ -67,11 +78,19 @@ impl Parser {
             Ok(Token::Star) => Ok(BinaryOperator::Multiply),
             Ok(Token::Slash) => Ok(BinaryOperator::Divide),
             Ok(Token::Percent) => Ok(BinaryOperator::Mod),
-            Ok(Token::Ampersand) => Ok(BinaryOperator::And),
-            Ok(Token::Pipe) => Ok(BinaryOperator::Or),
+            Ok(Token::Ampersand) => Ok(BinaryOperator::BitwiseAnd),
+            Ok(Token::Pipe) => Ok(BinaryOperator::BitwiseOr),
             Ok(Token::Caret) => Ok(BinaryOperator::Xor),
             Ok(Token::LeftShift) => Ok(BinaryOperator::LeftShift),
             Ok(Token::RightShift) => Ok(BinaryOperator::RightShift),
+            Ok(Token::LogicalAnd) => Ok(BinaryOperator::And),
+            Ok(Token::LogicalOr) => Ok(BinaryOperator::Or),
+            Ok(Token::DoubleEqual) => Ok(BinaryOperator::Equal),
+            Ok(Token::NotEqual) => Ok(BinaryOperator::NotEqual),
+            Ok(Token::LessThan) => Ok(BinaryOperator::LessThan),
+            Ok(Token::LessOrEqual) => Ok(BinaryOperator::LessOrEqual),
+            Ok(Token::GreaterThan) => Ok(BinaryOperator::GreaterThan),
+            Ok(Token::GreaterOrEqual) => Ok(BinaryOperator::GreaterOrEqual),
             other => Err(format!(
                 "Expected a binary operator, found {:?}",
                 other.unwrap()
@@ -79,11 +98,14 @@ impl Parser {
         }
     }
 
+    // <factor> ::= <int> | <unop> <factor> | "(" <exp> ")"
     fn parse_factor(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
         match next_token {
+            // constant
             Token::Constant(_) => self.parse_int(),
-            Token::Hyphen | Token::Tilde => {
+            // unary expression
+            Token::Hyphen | Token::Tilde | Token::Bang => {
                 let operator = self.parse_unop()?;
                 let inner_exp = self.parse_factor()?;
                 Ok(Exp::Unary(operator, Box::new(inner_exp)))

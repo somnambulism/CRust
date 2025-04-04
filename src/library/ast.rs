@@ -2,6 +2,7 @@
 pub enum UnaryOperator {
     Complement,
     Negate,
+    Not,
 }
 
 #[derive(Debug, PartialEq)]
@@ -11,11 +12,19 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Mod,
-    And,
-    Or,
+    BitwiseAnd,
+    BitwiseOr,
     Xor,
     LeftShift,
     RightShift,
+    And,
+    Or,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessOrEqual,
+    GreaterThan,
+    GreaterOrEqual,
 }
 
 #[derive(Debug, PartialEq)]

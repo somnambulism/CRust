@@ -1,4 +1,4 @@
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Reg {
     AX,
     CX,
@@ -7,7 +7,7 @@ pub enum Reg {
     R11,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operand {
     Imm(i32),
     Reg(Reg),
@@ -34,6 +34,16 @@ pub enum BinaryOperator {
 }
 
 #[derive(Clone, Debug)]
+pub enum CondCode {
+    E,
+    NE,
+    G,
+    GE,
+    L,
+    LE,
+}
+
+#[derive(Clone, Debug)]
 pub enum Instruction {
     Mov(Operand, Operand),
     Unary(UnaryOperator, Operand),
@@ -42,8 +52,13 @@ pub enum Instruction {
         src: Operand,
         dst: Operand,
     },
+    Cmp(Operand, Operand),
     Idiv(Operand),
     Cdq,
+    Jmp(String),
+    JmpCC(CondCode, String),
+    SetCC(CondCode, Operand),
+    Label(String),
     AllocateStack(i32),
     Ret,
 }

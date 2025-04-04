@@ -34,7 +34,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         ],
         // Destination of Mult can't be in memory
         Instruction::Binary {
-            op: op @ BinaryOperator::Mult | op @ BinaryOperator::Sal | op @ BinaryOperator::Sar,
+            op: op @ BinaryOperator::Mult,
             src,
             dst: dst @ Operand::Stack(_),
         } => vec![
@@ -45,6 +45,39 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
                 dst: Operand::Reg(Reg::R11),
             },
             Instruction::Mov(Operand::Reg(Reg::R11), dst),
+        ],
+        // Sal/Sar can't use memory addresses for both operands
+        Instruction::Binary {
+            op: op @ BinaryOperator::Sal | op @ BinaryOperator::Sar,
+            src,
+            dst: dst @ Operand::Stack(_),
+        } => {
+            // if the source is a constant, sal/sar can be done directly
+            if let Operand::Imm(_) = src {
+                return vec![Instruction::Binary { op, src, dst }];
+            // otherwise, we need to move the destination to a register first
+            } else {
+                return vec![
+                    Instruction::Mov(dst.clone(), Operand::Reg(Reg::R11)),
+                    Instruction::Mov(src.clone(), Operand::Reg(Reg::CX)),
+                    Instruction::Binary {
+                        op,
+                        src: Operand::Reg(Reg::CX),
+                        dst: Operand::Reg(Reg::R11),
+                    },
+                    Instruction::Mov(Operand::Reg(Reg::R11), dst),
+                ];
+            }
+        }
+        // Both operands of cmp can't be in memory
+        Instruction::Cmp(src @ Operand::Stack(_), dst @ Operand::Stack(_)) => vec![
+            Instruction::Mov(src, Operand::Reg(Reg::R10)),
+            Instruction::Cmp(Operand::Reg(Reg::R10), dst),
+        ],
+        // Second operand of cmp can't be a constant
+        Instruction::Cmp(src, Operand::Imm(i)) => vec![
+            Instruction::Mov(Operand::Imm(i), Operand::Reg(Reg::R11)),
+            Instruction::Cmp(src, Operand::Reg(Reg::R11)),
         ],
         other => vec![other],
     }

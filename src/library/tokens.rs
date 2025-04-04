@@ -23,8 +23,17 @@ pub enum Token {
     Slash,
     Percent,
     Ampersand,
-    Pipe,
-    Caret,
-    LeftShift,
-    RightShift,
+    Pipe,        // |
+    Caret,       // ^
+    LeftShift,   // <<
+    RightShift,  // >>
+    Bang,        // !
+    LogicalAnd,  // &&
+    LogicalOr,   // ||
+    DoubleEqual, // ==
+    NotEqual,    // !=
+    LessThan,
+    GreaterThan,
+    LessOrEqual,
+    GreaterOrEqual,
 }

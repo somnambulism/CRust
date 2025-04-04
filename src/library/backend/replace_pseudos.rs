@@ -52,11 +52,24 @@ impl ReplacementState {
                     dst: new_dst,
                 }
             }
+            Instruction::Cmp(op1, op2) => {
+                let new_op1 = self.replace_operand(op1);
+                let new_op2 = self.replace_operand(op2);
+                Instruction::Cmp(new_op1, new_op2)
+            }
             Instruction::Idiv(op) => {
                 let new_op = self.replace_operand(op);
                 Instruction::Idiv(new_op)
             }
-            Instruction::Ret | Instruction::Cdq => instruction,
+            Instruction::SetCC(code, op) => {
+                let new_op = self.replace_operand(op);
+                Instruction::SetCC(code, new_op)
+            }
+            Instruction::Ret
+            | Instruction::Cdq
+            | Instruction::Label(_)
+            | Instruction::JmpCC(_, _)
+            | Instruction::Jmp(_) => instruction,
             Instruction::AllocateStack(_) => {
                 panic!("Internal error: AllocateStack shouldn't be present at this point")
             }

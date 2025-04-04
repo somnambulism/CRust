@@ -2,6 +2,7 @@
 pub enum UnaryOperator {
     Complement,
     Negate,
+    Not,
 }
 
 #[derive(Debug, PartialEq)]
@@ -11,11 +12,17 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Mod,
-    And,
-    Or,
+    BitwiseAnd,
+    BitwiseOr,
     Xor,
     LeftShift,
     RightShift,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessOrEqual,
+    GreaterThan,
+    GreaterOrEqual,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +45,14 @@ pub enum Instruction {
         src2: TackyVal,
         dst: TackyVal,
     },
+    Copy {
+        src: TackyVal,
+        dst: TackyVal,
+    },
+    Jump(String),
+    JumpIfZero(TackyVal, String),
+    JumpIfNotZero(TackyVal, String),
+    Label(String),
 }
 
 #[derive(Debug, PartialEq)]
