@@ -5,6 +5,7 @@ pub mod compile;
 pub mod emit;
 pub mod lex;
 pub mod parse;
+pub mod semantic_analysis;
 pub mod settings;
 pub mod tacky;
 pub mod tacky_gen;

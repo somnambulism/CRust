@@ -1,5 +1,8 @@
 use super::{
-    ast::{BinaryOperator, Exp, FunctionDefinition, Program, Statement, UnaryOperator},
+    ast::{
+        BinaryOperator, BlockItem, Declaration, Exp, FunctionDefinition, Program, Statement,
+        UnaryOperator,
+    },
     tok_stream::TokenStream,
     tokens::Token,
 };
@@ -22,6 +25,7 @@ fn get_precedence(token: &Token) -> Option<i32> {
         Token::Pipe => Some(15),
         Token::LogicalAnd => Some(10),
         Token::LogicalOr => Some(5),
+        Token::EqualSign => Some(1),
         _ => None,
     }
 }
@@ -48,6 +52,9 @@ impl Parser {
         }
     }
 
+    // Expressions
+
+    // <int> ::= ? A constant token ?
     fn parse_int(&mut self) -> Result<Exp, String> {
         match self.tokens.take_token() {
             Ok(Token::Constant(c)) => Ok(Exp::Constant(c)),
@@ -98,12 +105,14 @@ impl Parser {
         }
     }
 
-    // <factor> ::= <int> | <unop> <factor> | "(" <exp> ")"
+    // <factor> ::= <int> | <identifier> |<unop> <factor> | "(" <exp> ")"
     fn parse_factor(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
         match next_token {
             // constant
             Token::Constant(_) => self.parse_int(),
+            // identifier
+            Token::Identifier(_) => Ok(Exp::Var(self.parse_id()?)),
             // unary expression
             Token::Hyphen | Token::Tilde | Token::Bang => {
                 let operator = self.parse_unop()?;
@@ -122,33 +131,95 @@ impl Parser {
 
     fn parse_exp(&mut self, min_prec: i32) -> Result<Exp, String> {
         let mut left = self.parse_factor()?;
+        let mut next_token = self.tokens.peek()?;
 
-        while let Ok(next_token) = self.tokens.peek() {
-            if let Some(prec) = get_precedence(&next_token) {
-                if prec < min_prec {
-                    break;
-                }
-
-                // Consume operator
-                let operator = self.parse_binop()?;
-                let right = self.parse_exp(prec + 1)?;
-
-                left = Exp::Binary(operator, Box::new(left), Box::new(right));
-            } else {
+        while let Some(prec) = get_precedence(&next_token) {
+            if prec < min_prec {
                 break;
             }
+
+            if next_token == &Token::EqualSign {
+                self.tokens.take_token()?;
+                let right = self.parse_exp(prec)?;
+                left = Exp::Assignment(Box::new(left), Box::new(right));
+            } else {
+                let operator = self.parse_binop()?;
+                let right = self.parse_exp(prec + 1)?;
+                left = Exp::Binary(operator, Box::new(left), Box::new(right));
+            }
+
+            next_token = self.tokens.peek()?;
         }
 
         Ok(left)
     }
 
-    fn parse_statement(&mut self) -> Result<Statement, String> {
-        self.expect(Token::KWReturn)?;
-        let exp = self.parse_exp(0)?;
-        self.expect(Token::Semicolon)?;
-        Ok(Statement::Return(exp))
+    // <declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
+    fn parse_declaration(&mut self) -> Result<Declaration, String> {
+        self.expect(Token::KWInt)?;
+        let var_name = self.parse_id()?;
+
+        let init = match self.tokens.take_token()? {
+            // No initializer
+            Token::Semicolon => None,
+            // With initializer
+            Token::EqualSign => {
+                let init_exp = self.parse_exp(0)?;
+                self.expect(Token::Semicolon)?;
+                Some(init_exp)
+            }
+            // Unexpected token
+            other => {
+                return Err(format!(
+                    "Expected an initializer or semicolon, found {:?}",
+                    other
+                ));
+            }
+        };
+
+        Ok(Declaration {
+            name: var_name,
+            init,
+        })
     }
 
+    // <statement> ::= "return" <exp> ";" | <exp> ";" | ";"
+    fn parse_statement(&mut self) -> Result<Statement, String> {
+        match self.tokens.peek() {
+            // "return" <exp> ";"
+            Ok(Token::KWReturn) => {
+                // consume return keyword
+                self.tokens.take_token()?;
+                let exp = self.parse_exp(0)?;
+                self.expect(Token::Semicolon)?;
+                Ok(Statement::Return(exp))
+            }
+            // ";"
+            Ok(Token::Semicolon) => {
+                self.tokens.take_token()?;
+                Ok(Statement::Null)
+            }
+            // <exp> ";"
+            _ => {
+                let exp = self.parse_exp(0)?;
+                self.expect(Token::Semicolon)?;
+                Ok(Statement::Expression(exp))
+            }
+        }
+    }
+
+    // <block_item> ::= <statement> | <declaration>
+    fn parse_block_item(&mut self) -> Result<BlockItem, String> {
+        if self.tokens.peek() == Ok(&Token::KWInt) {
+            Ok(BlockItem::D(self.parse_declaration()?))
+        } else {
+            Ok(BlockItem::S(self.parse_statement()?))
+        }
+    }
+
+    // Top level
+
+    // <function> ::= "int" <identifier> "(" "void" ")" "{" { <block-item> } "}"
     fn parse_function_definition(&mut self) -> Result<FunctionDefinition, String> {
         self.expect(Token::KWInt)?;
         let fun_name = self.parse_id()?;
@@ -156,11 +227,17 @@ impl Parser {
         self.expect(Token::KWVoid)?;
         self.expect(Token::CloseParen)?;
         self.expect(Token::OpenBrace)?;
-        let statement = self.parse_statement()?;
+
+        let mut body = Vec::new();
+        while self.tokens.peek()? != &Token::CloseBrace {
+            let next_block_item = self.parse_block_item()?;
+            body.push(next_block_item);
+        }
+
         self.expect(Token::CloseBrace)?;
         Ok(FunctionDefinition {
             name: fun_name,
-            body: statement,
+            body: body,
         })
     }
 

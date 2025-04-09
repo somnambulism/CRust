@@ -6,6 +6,7 @@ use std::{
 
 use crate::library::{emit::CodeEmitter, lex::Lexer, parse::Parser, settings::current_platform};
 
+use super::semantic_analysis::resolve::Resolver;
 use super::{
     backend::{codegen, instruction_fixup, replace_pseudos},
     settings::Stage,
@@ -35,8 +36,16 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
         return;
     }
 
+    // Semantic analysis
+    let mut resolver = Resolver::new();
+    let validated_ast = resolver.resolve(ast);
+
+    if *stage == Stage::Validate {
+        return;
+    }
+
     // Convert the AST to TACKY
-    let tacky = tacky_gen::generate(ast);
+    let tacky = tacky_gen::generate(validated_ast);
     if debug {
         let mut tacky_filename = PathBuf::from(src_file);
         tacky_filename.set_extension("debug.tacky");

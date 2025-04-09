@@ -164,7 +164,6 @@ impl CodeEmitter {
     fn emit_stack_note(&mut self) -> Result<()> {
         match self.platform {
             Target::Linux => writeln!(self.file, "\t.section .note.GNU-stack,\"\",@progbits"),
-            Target::Windows => writeln!(self.file, "\t.section .drectve"),
             _ => Ok(()),
         }
     }

@@ -36,4 +36,5 @@ pub enum Token {
     GreaterThan,
     LessOrEqual,
     GreaterOrEqual,
+    EqualSign,  // =
 }

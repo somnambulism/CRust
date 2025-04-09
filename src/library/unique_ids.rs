@@ -11,3 +11,5 @@ pub fn make_label(prefix: &str) -> String {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{}.{}", prefix, n)
 }
+
+pub static make_named_temporary: fn(&str) -> String = make_label;

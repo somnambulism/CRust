@@ -132,6 +132,10 @@ impl Lexer {
                 re: Regex::new("^>").unwrap(),
                 converter: |_s| Token::GreaterThan,
             },
+            TokenDef {
+                re: Regex::new("^=").unwrap(),
+                converter: |_s| Token::EqualSign,
+            },
         ];
         Lexer { token_defs }
     }

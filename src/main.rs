@@ -53,7 +53,16 @@ fn assemble_and_link(src: &str, cleanup: bool) {
     let assembly_file = replace_extension(src, "s");
     let output_file = replace_extension(src, "exe");
 
-    run_command("gcc", &["-nostartfiles", "-nostdlib", &assembly_file, "-o", &output_file]);
+    run_command(
+        "gcc",
+        &[
+            "-nostartfiles",
+            "-nostdlib",
+            &assembly_file,
+            "-o",
+            &output_file,
+        ],
+    );
 
     if cleanup {
         run_command("rm", &[&assembly_file]);
@@ -82,6 +91,8 @@ fn main() {
             stage = Stage::Lex;
         } else if arg == "--parse" {
             stage = Stage::Parse;
+        } else if arg == "--validate" {
+            stage = Stage::Validate;
         } else if arg == "--tacky" {
             stage = Stage::Tacky;
         } else if arg == "--codegen" {

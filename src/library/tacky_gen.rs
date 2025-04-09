@@ -1,7 +1,8 @@
 use super::{
     ast::{
-        BinaryOperator as AstBinaryOperator, Exp, FunctionDefinition as AstFunction,
-        Program as AstProgram, Statement, UnaryOperator as AstUnaryOperator,
+        BinaryOperator as AstBinaryOperator, BlockItem, Declaration, Exp,
+        FunctionDefinition as AstFunction, Program as AstProgram, Statement,
+        UnaryOperator as AstUnaryOperator,
     },
     tacky::{BinaryOperator, FunctionDefinition, Instruction, Program, TackyVal, UnaryOperator},
     unique_ids::{make_label, make_temporary},
@@ -42,10 +43,23 @@ fn convert_binop(op: AstBinaryOperator) -> BinaryOperator {
 fn emit_tacky_for_exp(exp: Exp) -> (Vec<Instruction>, TackyVal) {
     match exp {
         Exp::Constant(c) => (vec![], TackyVal::Constant(c)),
+        Exp::Var(v) => (vec![], TackyVal::Var(v)),
         Exp::Unary(op, inner) => emit_unary_expression(op, *inner),
         Exp::Binary(AstBinaryOperator::And, e1, e2) => emit_and_expression(*e1, *e2),
         Exp::Binary(AstBinaryOperator::Or, e1, e2) => emit_or_expression(*e1, *e2),
         Exp::Binary(op, e1, e2) => emit_binary_expression(op, *e1, *e2),
+        Exp::Assignment(lhs, rhs) => {
+            if let Exp::Var(v) = *lhs {
+                let (mut instructions, rhs_result) = emit_tacky_for_exp(*rhs);
+                instructions.push(Instruction::Copy {
+                    src: rhs_result,
+                    dst: TackyVal::Var(v.clone()),
+                });
+                (instructions, TackyVal::Var(v))
+            } else {
+                panic!("Internal error: bad lvalue")
+            }
+        }
     }
 }
 
@@ -140,13 +154,49 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
             eval_exp.push(Instruction::Return(v));
             eval_exp
         }
+        Statement::Expression(e) => {
+            // evaluate expression but ignore the result
+            let (eval_exp, _exp_result) = emit_tacky_for_exp(e);
+            eval_exp
+        }
+        Statement::Null => vec![],
     }
 }
 
-fn emit_tacky_for_function(func: AstFunction) -> FunctionDefinition {
+fn emit_tacky_for_block_item(item: BlockItem) -> Vec<Instruction> {
+    match item {
+        BlockItem::S(s) => emit_tacky_for_statement(s),
+        BlockItem::D(Declaration {
+            name,
+            init: Some(e),
+        }) => {
+            // treat declaration with initializer like an assignment expression
+            let (eval_assignment, _assignment_result) =
+                emit_tacky_for_exp(Exp::Assignment(Exp::Var(name).into(), e.into()));
+            eval_assignment
+        }
+        BlockItem::D(Declaration {
+            name: _,
+            init: None,
+        }) => {
+            // don't generate instructions for declaration without initializer
+            vec![]
+        }
+    }
+}
+
+fn emit_tacky_for_function(AstFunction { name, body }: AstFunction) -> FunctionDefinition {
+    let body_instructions: Vec<Instruction> = body
+        .into_iter()
+        .flat_map(emit_tacky_for_block_item)
+        .collect();
+    let extra_return = Instruction::Return(TackyVal::Constant(0));
     FunctionDefinition {
-        name: func.name,
-        body: emit_tacky_for_statement(func.body),
+        name,
+        body: body_instructions
+            .into_iter()
+            .chain(std::iter::once(extra_return))
+            .collect(),
     }
 }
 
