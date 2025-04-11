@@ -50,6 +50,26 @@ impl Resolver {
             ),
             // Nothing to do for constant
             Exp::Constant(_) => exp,
+            Exp::CompoundAssign(op, lhs, rhs) => {
+                // validate that lhs is an lvalue
+                if let Exp::Var(_) = *lhs {
+                    // recursively process lhs and rhs
+                    return Exp::CompoundAssign(
+                        op,
+                        Box::new(self.resolve_exp(*lhs)),
+                        Box::new(self.resolve_exp(*rhs)),
+                    );
+                } else {
+                    panic!(
+                        "Expected expression on left-hand side of compound assignment statement, found {:?}",
+                        lhs
+                    )
+                }
+            }
+            Exp::PrefixIncrement(e) => Exp::PrefixIncrement(Box::new(self.resolve_exp(*e))),
+            Exp::PrefixDecrement(e) => Exp::PrefixDecrement(Box::new(self.resolve_exp(*e))),
+            Exp::PostfixIncrement(e) => Exp::PostfixIncrement(Box::new(self.resolve_exp(*e))),
+            Exp::PostfixDecrement(e) => Exp::PostfixDecrement(Box::new(self.resolve_exp(*e))),
         }
     }
 

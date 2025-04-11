@@ -24,6 +24,13 @@ impl TokenStream {
         self.tokens
             .as_slice()
             .first()
+            .ok_or_else(|| "End of stream".to_string())
+    }
+
+    pub fn peek_nth(&self, n: usize) -> Result<&Token, String> {
+        self.tokens
+            .as_slice()
+            .iter().nth(n)
             .ok_or_else(|| "End of steram".to_string())
     }
 

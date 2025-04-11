@@ -1,6 +1,6 @@
 use super::{
     ast::{
-        BinaryOperator as AstBinaryOperator, BlockItem, Declaration, Exp,
+        BinaryOperator as AstBinaryOperator, BlockItem, CompoundAssignOperator, Declaration, Exp,
         FunctionDefinition as AstFunction, Program as AstProgram, Statement,
         UnaryOperator as AstUnaryOperator,
     },
@@ -40,6 +40,21 @@ fn convert_binop(op: AstBinaryOperator) -> BinaryOperator {
     }
 }
 
+fn convert_compound_assignment_op(op: CompoundAssignOperator) -> BinaryOperator {
+    match op {
+        CompoundAssignOperator::PlusEqual => BinaryOperator::Add,
+        CompoundAssignOperator::MinusEqual => BinaryOperator::Subtract,
+        CompoundAssignOperator::StarEqual => BinaryOperator::Multiply,
+        CompoundAssignOperator::SlashEqual => BinaryOperator::Divide,
+        CompoundAssignOperator::PercentEqual => BinaryOperator::Mod,
+        CompoundAssignOperator::AmpersandEqual => BinaryOperator::BitwiseAnd,
+        CompoundAssignOperator::PipeEqual => BinaryOperator::BitwiseOr,
+        CompoundAssignOperator::CaretEqual => BinaryOperator::Xor,
+        CompoundAssignOperator::LeftShiftEqual => BinaryOperator::LeftShift,
+        CompoundAssignOperator::RightShiftEqual => BinaryOperator::RightShift,
+    }
+}
+
 fn emit_tacky_for_exp(exp: Exp) -> (Vec<Instruction>, TackyVal) {
     match exp {
         Exp::Constant(c) => (vec![], TackyVal::Constant(c)),
@@ -60,6 +75,26 @@ fn emit_tacky_for_exp(exp: Exp) -> (Vec<Instruction>, TackyVal) {
                 panic!("Internal error: bad lvalue")
             }
         }
+        Exp::CompoundAssign(op, lhs, rhs) => {
+            if let Exp::Var(v) = *lhs {
+                let (mut instructions, rhs_result) = emit_tacky_for_exp(*rhs);
+                let tacky_op = convert_compound_assignment_op(op);
+                let dst = TackyVal::Var(v.clone());
+                instructions.push(Instruction::Binary {
+                    op: tacky_op,
+                    src1: TackyVal::Var(v.clone()),
+                    src2: rhs_result,
+                    dst: dst.clone(),
+                });
+                (instructions, TackyVal::Var(v))
+            } else {
+                panic!("Internal error: bad lvalue")
+            }
+        }
+        Exp::PrefixIncrement(inner) => emit_inc_dec(*inner, true, false),
+        Exp::PrefixDecrement(inner) => emit_inc_dec(*inner, false, false),
+        Exp::PostfixIncrement(inner) => emit_inc_dec(*inner, true, true),
+        Exp::PostfixDecrement(inner) => emit_inc_dec(*inner, false, true),
     }
 }
 
@@ -145,6 +180,42 @@ fn emit_or_expression(e1: Exp, e2: Exp) -> (Vec<Instruction>, TackyVal) {
         Instruction::Label(end_label),
     ]);
     (instructions, dst)
+}
+
+fn emit_inc_dec(inner: Exp, is_inc: bool, is_post: bool) -> (Vec<Instruction>, TackyVal) {
+    if let Exp::Var(v) = inner {
+        let dst = TackyVal::Var(v.clone());
+        let tmp = TackyVal::Var(make_temporary());
+        let op = if is_inc {
+            BinaryOperator::Add
+        } else {
+            BinaryOperator::Subtract
+        };
+
+        let one = TackyVal::Constant(1);
+
+        let mut instuctions = vec![];
+
+        if is_post {
+            // save the original value in a temporary variable
+            instuctions.push(Instruction::Copy {
+                src: dst.clone(),
+                dst: tmp.clone(),
+            });
+        }
+
+        instuctions.push(Instruction::Binary {
+            op: op,
+            src1: dst.clone(),
+            src2: one,
+            dst: dst.clone(),
+        });
+
+        let result = if is_post { tmp } else { dst };
+        (instuctions, result)
+    } else {
+        panic!("Internal error: ++/-- can only be applied to variables");
+    }
 }
 
 fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {

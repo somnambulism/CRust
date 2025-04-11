@@ -86,3 +86,5 @@ the source code into C...
       return a + b;
   }
   ```
+  - Extra: compound assignment operators (`+=`, `-=` etc.) and increment/decrement (`++`, `--`).
+    The code for increment/decrement is ugly, needs to be refactored (but I won't).

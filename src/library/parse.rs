@@ -1,7 +1,7 @@
 use super::{
     ast::{
-        BinaryOperator, BlockItem, Declaration, Exp, FunctionDefinition, Program, Statement,
-        UnaryOperator,
+        BinaryOperator, BlockItem, CompoundAssignOperator, Declaration, Exp, FunctionDefinition,
+        Program, Statement, UnaryOperator,
     },
     tok_stream::TokenStream,
     tokens::Token,
@@ -14,7 +14,7 @@ pub struct Parser {
 fn get_precedence(token: &Token) -> Option<i32> {
     match token {
         Token::Star | Token::Slash | Token::Percent => Some(50),
-        Token::Plus | Token::Hyphen => Some(45),
+        Token::Plus | Token::Hyphen | Token::DoublePlus | Token::DoubleHyphen => Some(45),
         Token::LeftShift | Token::RightShift => Some(40),
         Token::LessThan | Token::LessOrEqual | Token::GreaterThan | Token::GreaterOrEqual => {
             Some(35)
@@ -25,7 +25,17 @@ fn get_precedence(token: &Token) -> Option<i32> {
         Token::Pipe => Some(15),
         Token::LogicalAnd => Some(10),
         Token::LogicalOr => Some(5),
-        Token::EqualSign => Some(1),
+        Token::EqualSign
+        | Token::PlusEqual
+        | Token::MinusEqual
+        | Token::StarEqual
+        | Token::SlashEqual
+        | Token::PercentEqual
+        | Token::AmpersandEqual
+        | Token::PipeEqual
+        | Token::CaretEqual
+        | Token::LeftShiftEqual
+        | Token::RightShiftEqual => Some(1),
         _ => None,
     }
 }
@@ -105,6 +115,25 @@ impl Parser {
         }
     }
 
+    fn parse_compound_assgin_op(&mut self) -> Result<CompoundAssignOperator, String> {
+        match self.tokens.take_token() {
+            Ok(Token::PlusEqual) => Ok(CompoundAssignOperator::PlusEqual),
+            Ok(Token::MinusEqual) => Ok(CompoundAssignOperator::MinusEqual),
+            Ok(Token::StarEqual) => Ok(CompoundAssignOperator::StarEqual),
+            Ok(Token::SlashEqual) => Ok(CompoundAssignOperator::SlashEqual),
+            Ok(Token::PercentEqual) => Ok(CompoundAssignOperator::PercentEqual),
+            Ok(Token::AmpersandEqual) => Ok(CompoundAssignOperator::AmpersandEqual),
+            Ok(Token::PipeEqual) => Ok(CompoundAssignOperator::PipeEqual),
+            Ok(Token::CaretEqual) => Ok(CompoundAssignOperator::CaretEqual),
+            Ok(Token::LeftShiftEqual) => Ok(CompoundAssignOperator::LeftShiftEqual),
+            Ok(Token::RightShiftEqual) => Ok(CompoundAssignOperator::RightShiftEqual),
+            other => Err(format!(
+                "Expected a compound assignment operator, found {:?}",
+                other.unwrap()
+            )),
+        }
+    }
+
     // <factor> ::= <int> | <identifier> |<unop> <factor> | "(" <exp> ")"
     fn parse_factor(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
@@ -112,15 +141,37 @@ impl Parser {
             // constant
             Token::Constant(_) => self.parse_int(),
             // identifier
-            Token::Identifier(_) => Ok(Exp::Var(self.parse_id()?)),
+            Token::Identifier(_) => {
+                let id = self.parse_id()?;
+                self.parse_postfix_increment(id)
+            }
             // unary expression
             Token::Hyphen | Token::Tilde | Token::Bang => {
                 let operator = self.parse_unop()?;
                 let inner_exp = self.parse_factor()?;
                 Ok(Exp::Unary(operator, Box::new(inner_exp)))
             }
+            // prefix increment
+            Token::DoublePlus => {
+                self.tokens.take_token()?;
+                let inner_exp = self.parse_factor()?;
+                Ok(Exp::PrefixIncrement(Box::new(inner_exp)))
+            }
+            // prefix decrement
+            Token::DoubleHyphen => {
+                self.tokens.take_token()?;
+                let inner_exp = self.parse_factor()?;
+                Ok(Exp::PrefixDecrement(Box::new(inner_exp)))
+            }
             Token::OpenParen => {
                 let _ = self.tokens.take_token();
+                if let Token::Identifier(_) = self.tokens.peek()? {
+                    if self.tokens.peek_nth(1)? == &Token::CloseParen {
+                        let id = self.parse_id()?;
+                        let _ = self.tokens.take_token();
+                        return self.parse_postfix_increment(id);
+                    }
+                }
                 let e = self.parse_exp(0);
                 let _ = self.expect(Token::CloseParen);
                 e
@@ -129,6 +180,20 @@ impl Parser {
         }
     }
 
+    fn parse_postfix_increment(&mut self, id: String) -> Result<Exp, String> {
+        match self.tokens.peek()? {
+            Token::DoublePlus => {
+                self.tokens.take_token()?;
+                return Ok(Exp::PostfixIncrement(Box::new(Exp::Var(id))));
+            }
+            Token::DoubleHyphen => {
+                self.tokens.take_token()?;
+                return Ok(Exp::PostfixDecrement(Box::new(Exp::Var(id))));
+            }
+            _ => return Ok(Exp::Var(id)),
+        }
+    }
+    
     fn parse_exp(&mut self, min_prec: i32) -> Result<Exp, String> {
         let mut left = self.parse_factor()?;
         let mut next_token = self.tokens.peek()?;
@@ -138,14 +203,31 @@ impl Parser {
                 break;
             }
 
-            if next_token == &Token::EqualSign {
-                self.tokens.take_token()?;
-                let right = self.parse_exp(prec)?;
-                left = Exp::Assignment(Box::new(left), Box::new(right));
-            } else {
-                let operator = self.parse_binop()?;
-                let right = self.parse_exp(prec + 1)?;
-                left = Exp::Binary(operator, Box::new(left), Box::new(right));
+            match next_token {
+                Token::EqualSign => {
+                    self.tokens.take_token()?;
+                    let right = self.parse_exp(prec)?;
+                    left = Exp::Assignment(Box::new(left), Box::new(right));
+                }
+                Token::PlusEqual
+                | Token::MinusEqual
+                | Token::StarEqual
+                | Token::SlashEqual
+                | Token::PercentEqual
+                | Token::AmpersandEqual
+                | Token::PipeEqual
+                | Token::CaretEqual
+                | Token::LeftShiftEqual
+                | Token::RightShiftEqual => {
+                    let operator = self.parse_compound_assgin_op()?;
+                    let right = self.parse_exp(prec)?;
+                    left = Exp::CompoundAssign(operator, Box::new(left), Box::new(right))
+                }
+                _ => {
+                    let operator = self.parse_binop()?;
+                    let right = self.parse_exp(prec + 1)?;
+                    left = Exp::Binary(operator, Box::new(left), Box::new(right));
+                }
             }
 
             next_token = self.tokens.peek()?;

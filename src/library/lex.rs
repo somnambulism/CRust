@@ -53,6 +53,18 @@ impl Lexer {
                 converter: |_s| Token::DoubleHyphen,
             },
             TokenDef {
+                re: Regex::new(r"^\+\+").unwrap(),
+                converter: |_s| Token::DoublePlus,
+            },
+            TokenDef {
+                re: Regex::new("^<<=").unwrap(),
+                converter: |_s| Token::LeftShiftEqual,
+            },
+            TokenDef {
+                re: Regex::new("^>>=").unwrap(),
+                converter: |_s| Token::RightShiftEqual,
+            },
+            TokenDef {
                 re: Regex::new("^<<").unwrap(),
                 converter: |_s| Token::LeftShift,
             },
@@ -83,6 +95,38 @@ impl Lexer {
             TokenDef {
                 re: Regex::new("^>=").unwrap(),
                 converter: |_s| Token::GreaterOrEqual,
+            },
+            TokenDef {
+                re: Regex::new(r"^\+=").unwrap(),
+                converter: |_s| Token::PlusEqual,
+            },
+            TokenDef {
+                re: Regex::new("^-=").unwrap(),
+                converter: |_s| Token::MinusEqual,
+            },
+            TokenDef {
+                re: Regex::new(r"^\*=").unwrap(),
+                converter: |_s| Token::StarEqual,
+            },
+            TokenDef {
+                re: Regex::new("^/=").unwrap(),
+                converter: |_s| Token::SlashEqual,
+            },
+            TokenDef {
+                re: Regex::new("^%=").unwrap(),
+                converter: |_s| Token::PercentEqual,
+            },
+            TokenDef {
+                re: Regex::new("^&=").unwrap(),
+                converter: |_s| Token::AmpersandEqual,
+            },
+            TokenDef {
+                re: Regex::new(r"^\|=").unwrap(),
+                converter: |_s| Token::PipeEqual,
+            },
+            TokenDef {
+                re: Regex::new(r"^\^=").unwrap(),
+                converter: |_s| Token::CaretEqual,
             },
             TokenDef {
                 re: Regex::new("^-").unwrap(),

@@ -19,10 +19,11 @@ pub enum Token {
     DoubleHyphen,
     Tilde,
     Plus,
+    DoublePlus,
     Star,
     Slash,
     Percent,
-    Ampersand,
+    Ampersand,   // &
     Pipe,        // |
     Caret,       // ^
     LeftShift,   // <<
@@ -36,5 +37,15 @@ pub enum Token {
     GreaterThan,
     LessOrEqual,
     GreaterOrEqual,
-    EqualSign,  // =
+    EqualSign,      // =
+    PlusEqual,      // +=
+    MinusEqual,     // -=
+    StarEqual,      // *=
+    SlashEqual,     // /=
+    PercentEqual,   // %=
+    AmpersandEqual, // &=
+    PipeEqual,      // |=
+    CaretEqual,     // ^=
+    LeftShiftEqual, // <<=
+    RightShiftEqual,// >>=
 }

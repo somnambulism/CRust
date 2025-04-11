@@ -28,12 +28,31 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum CompoundAssignOperator {
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
+    AmpersandEqual,
+    PipeEqual,
+    CaretEqual,
+    LeftShiftEqual,
+    RightShiftEqual,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Exp {
     Constant(i32),
     Var(String),
     Unary(UnaryOperator, Box<Exp>),
     Binary(BinaryOperator, Box<Exp>, Box<Exp>),
     Assignment(Box<Exp>, Box<Exp>),
+    CompoundAssign(CompoundAssignOperator, Box<Exp>, Box<Exp>),
+    PrefixIncrement(Box<Exp>),
+    PrefixDecrement(Box<Exp>),
+    PostfixIncrement(Box<Exp>),
+    PostfixDecrement(Box<Exp>),
 }
 
 #[derive(Debug, PartialEq)]
