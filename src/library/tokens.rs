@@ -8,6 +8,8 @@ pub enum Token {
     KWInt,
     KWReturn,
     KWVoid,
+    KWIf,
+    KWElse,
 
     // Punctuation
     OpenParen,
@@ -37,15 +39,17 @@ pub enum Token {
     GreaterThan,
     LessOrEqual,
     GreaterOrEqual,
-    EqualSign,      // =
-    PlusEqual,      // +=
-    MinusEqual,     // -=
-    StarEqual,      // *=
-    SlashEqual,     // /=
-    PercentEqual,   // %=
-    AmpersandEqual, // &=
-    PipeEqual,      // |=
-    CaretEqual,     // ^=
-    LeftShiftEqual, // <<=
-    RightShiftEqual,// >>=
+    EqualSign,       // =
+    PlusEqual,       // +=
+    MinusEqual,      // -=
+    StarEqual,       // *=
+    SlashEqual,      // /=
+    PercentEqual,    // %=
+    AmpersandEqual,  // &=
+    PipeEqual,       // |=
+    CaretEqual,      // ^=
+    LeftShiftEqual,  // <<=
+    RightShiftEqual, // >>=
+    QuestionMark,
+    Colon,
 }

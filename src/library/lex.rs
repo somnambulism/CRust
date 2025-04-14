@@ -180,6 +180,14 @@ impl Lexer {
                 re: Regex::new("^=").unwrap(),
                 converter: |_s| Token::EqualSign,
             },
+            TokenDef {
+                re: Regex::new(r"^\?").unwrap(),
+                converter: |_s| Token::QuestionMark,
+            },
+            TokenDef {
+                re: Regex::new("^:").unwrap(),
+                converter: |_s| Token::Colon,
+            },
         ];
         Lexer { token_defs }
     }
@@ -225,6 +233,8 @@ impl Lexer {
             "int" => Token::KWInt,
             "return" => Token::KWReturn,
             "void" => Token::KWVoid,
+            "if" => Token::KWIf,
+            "else" => Token::KWElse,
             _ => Token::Identifier(s.to_string()),
         }
     }

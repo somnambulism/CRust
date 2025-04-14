@@ -41,13 +41,22 @@ impl Resolver {
                     |name| Exp::Var(name.clone()),
                 )
             }
-            // recursively process operands for unary and binary
+            // recursively process operands for unary, binary and conditional
             Exp::Unary(op, e) => Exp::Unary(op, Box::new(self.resolve_exp(*e))),
             Exp::Binary(op, e1, e2) => Exp::Binary(
                 op,
                 Box::new(self.resolve_exp(*e1)),
                 Box::new(self.resolve_exp(*e2)),
             ),
+            Exp::Conditional {
+                condition,
+                then_result,
+                else_result,
+            } => Exp::Conditional {
+                condition: self.resolve_exp(*condition).into(),
+                then_result: self.resolve_exp(*then_result).into(),
+                else_result: self.resolve_exp(*else_result).into(),
+            },
             // Nothing to do for constant
             Exp::Constant(_) => exp,
             Exp::CompoundAssign(op, lhs, rhs) => {
@@ -98,6 +107,15 @@ impl Resolver {
         match statement {
             Statement::Return(e) => Statement::Return(self.resolve_exp(e)),
             Statement::Expression(e) => Statement::Expression(self.resolve_exp(e)),
+            Statement::If {
+                condition,
+                then_clause,
+                else_clause,
+            } => Statement::If {
+                condition: self.resolve_exp(condition),
+                then_clause: self.resolve_statement(*then_clause).into(),
+                else_clause: else_clause.map(|stmt| self.resolve_statement(*stmt).into()),
+            },
             Statement::Null => Statement::Null,
         }
     }

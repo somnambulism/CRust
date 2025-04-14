@@ -25,6 +25,7 @@ fn get_precedence(token: &Token) -> Option<i32> {
         Token::Pipe => Some(15),
         Token::LogicalAnd => Some(10),
         Token::LogicalOr => Some(5),
+        Token::QuestionMark => Some(3),
         Token::EqualSign
         | Token::PlusEqual
         | Token::MinusEqual
@@ -134,6 +135,30 @@ impl Parser {
         }
     }
 
+    // Helper function to parse postfix increment and decrement
+    fn parse_postfix_increment(&mut self, id: String) -> Result<Exp, String> {
+        match self.tokens.peek()? {
+            Token::DoublePlus => {
+                self.tokens.take_token()?;
+                return Ok(Exp::PostfixIncrement(Box::new(Exp::Var(id))));
+            }
+            Token::DoubleHyphen => {
+                self.tokens.take_token()?;
+                return Ok(Exp::PostfixDecrement(Box::new(Exp::Var(id))));
+            }
+            _ => return Ok(Exp::Var(id)),
+        }
+    }
+
+    // Helper function to parse the middle of a conditional expression:
+    // "?" <exp> ":"
+    fn parse_conditional_middle(&mut self) -> Result<Exp, String> {
+        self.expect(Token::QuestionMark)?;
+        let e = self.parse_exp(0)?;
+        self.expect(Token::Colon)?;
+        Ok(e)
+    }
+
     // <factor> ::= <int> | <identifier> |<unop> <factor> | "(" <exp> ")"
     fn parse_factor(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
@@ -180,20 +205,6 @@ impl Parser {
         }
     }
 
-    fn parse_postfix_increment(&mut self, id: String) -> Result<Exp, String> {
-        match self.tokens.peek()? {
-            Token::DoublePlus => {
-                self.tokens.take_token()?;
-                return Ok(Exp::PostfixIncrement(Box::new(Exp::Var(id))));
-            }
-            Token::DoubleHyphen => {
-                self.tokens.take_token()?;
-                return Ok(Exp::PostfixDecrement(Box::new(Exp::Var(id))));
-            }
-            _ => return Ok(Exp::Var(id)),
-        }
-    }
-    
     fn parse_exp(&mut self, min_prec: i32) -> Result<Exp, String> {
         let mut left = self.parse_factor()?;
         let mut next_token = self.tokens.peek()?;
@@ -221,7 +232,16 @@ impl Parser {
                 | Token::RightShiftEqual => {
                     let operator = self.parse_compound_assgin_op()?;
                     let right = self.parse_exp(prec)?;
-                    left = Exp::CompoundAssign(operator, Box::new(left), Box::new(right))
+                    left = Exp::CompoundAssign(operator, Box::new(left), Box::new(right));
+                }
+                Token::QuestionMark => {
+                    let middle = self.parse_conditional_middle()?;
+                    let right = self.parse_exp(prec)?;
+                    left = Exp::Conditional {
+                        condition: left.into(),
+                        then_result: middle.into(),
+                        else_result: right.into(),
+                    };
                 }
                 _ => {
                     let operator = self.parse_binop()?;
@@ -265,7 +285,10 @@ impl Parser {
         })
     }
 
-    // <statement> ::= "return" <exp> ";" | <exp> ";" | ";"
+    // <statement> ::= "return" <exp> ";"
+    //              | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+    //              | <exp> ";"
+    //              | ";"
     fn parse_statement(&mut self) -> Result<Statement, String> {
         match self.tokens.peek() {
             // "return" <exp> ";"
@@ -278,8 +301,31 @@ impl Parser {
             }
             // ";"
             Ok(Token::Semicolon) => {
+                // consume semicolon
                 self.tokens.take_token()?;
                 Ok(Statement::Null)
+            }
+            Ok(Token::KWIf) => {
+                // if statement - consume if keyword
+                self.tokens.take_token()?;
+                self.expect(Token::OpenParen)?;
+                let condition = self.parse_exp(0)?;
+                self.expect(Token::CloseParen)?;
+                let then_clause = self.parse_statement()?;
+                let else_clause = if let Ok(Token::KWElse) = self.tokens.peek() {
+                    // there is an else clause - consume the else keyword
+                    self.tokens.take_token()?;
+
+                    Some(Box::new(self.parse_statement()?))
+                } else {
+                    // there's no else clause
+                    None
+                };
+                Ok(Statement::If {
+                    condition,
+                    then_clause: then_clause.into(),
+                    else_clause,
+                })
             }
             // <exp> ";"
             _ => {

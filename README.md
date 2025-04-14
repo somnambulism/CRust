@@ -88,3 +88,4 @@ the source code into C...
   ```
   - Extra: compound assignment operators (`+=`, `-=` etc.) and increment/decrement (`++`, `--`).
     The code for increment/decrement is ugly, needs to be refactored (but I won't).
+- `if` statements and conditional expression (ternary `expression ? expression : expression`).

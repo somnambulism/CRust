@@ -53,6 +53,11 @@ pub enum Exp {
     PrefixDecrement(Box<Exp>),
     PostfixIncrement(Box<Exp>),
     PostfixDecrement(Box<Exp>),
+    Conditional {
+        condition: Box<Exp>,
+        then_result: Box<Exp>,
+        else_result: Box<Exp>,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -65,6 +70,11 @@ pub struct Declaration {
 pub enum Statement {
     Return(Exp),
     Expression(Exp),
+    If {
+        condition: Exp,
+        then_clause: Box<Statement>,
+        else_clause: Option<Box<Statement>>,
+    },
     Null,
 }
 

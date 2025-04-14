@@ -95,6 +95,11 @@ fn emit_tacky_for_exp(exp: Exp) -> (Vec<Instruction>, TackyVal) {
         Exp::PrefixDecrement(inner) => emit_inc_dec(*inner, false, false),
         Exp::PostfixIncrement(inner) => emit_inc_dec(*inner, true, true),
         Exp::PostfixDecrement(inner) => emit_inc_dec(*inner, false, true),
+        Exp::Conditional {
+            condition,
+            then_result,
+            else_result,
+        } => emit_conditional_expression(*condition, *then_result, *else_result),
     }
 }
 
@@ -218,6 +223,36 @@ fn emit_inc_dec(inner: Exp, is_inc: bool, is_post: bool) -> (Vec<Instruction>, T
     }
 }
 
+fn emit_conditional_expression(condition: Exp, e1: Exp, e2: Exp) -> (Vec<Instruction>, TackyVal) {
+    let (eval_cond, c) = emit_tacky_for_exp(condition);
+    let (eval_v1, v1) = emit_tacky_for_exp(e1);
+    let (eval_v2, v2) = emit_tacky_for_exp(e2);
+    let e2_label = make_label("conditional_else");
+    let end_label = make_label("conditional_end");
+    let dst_name = make_temporary();
+    let dst = TackyVal::Var(dst_name);
+    let mut instructions = eval_cond;
+    instructions.push(Instruction::JumpIfZero(c, e2_label.clone()));
+    instructions.extend(eval_v1);
+    instructions.extend(vec![
+        Instruction::Copy {
+            src: v1,
+            dst: dst.clone(),
+        },
+        Instruction::Jump(end_label.clone()),
+        Instruction::Label(e2_label),
+    ]);
+    instructions.extend(eval_v2);
+    instructions.extend(vec![
+        Instruction::Copy {
+            src: v2,
+            dst: dst.clone(),
+        },
+        Instruction::Label(end_label),
+    ]);
+    (instructions, dst)
+}
+
 fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
     match stmt {
         Statement::Return(e) => {
@@ -230,6 +265,11 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
             let (eval_exp, _exp_result) = emit_tacky_for_exp(e);
             eval_exp
         }
+        Statement::If {
+            condition,
+            then_clause,
+            else_clause,
+        } => emit_tacky_for_if_statement(condition, then_clause, else_clause),
         Statement::Null => vec![],
     }
 }
@@ -253,6 +293,35 @@ fn emit_tacky_for_block_item(item: BlockItem) -> Vec<Instruction> {
             // don't generate instructions for declaration without initializer
             vec![]
         }
+    }
+}
+
+fn emit_tacky_for_if_statement(
+    condition: Exp,
+    then_clause: Box<Statement>,
+    else_clause: Option<Box<Statement>>,
+) -> Vec<Instruction> {
+    if let None = else_clause {
+        // no else clause
+        let end_label = make_label("if_end");
+        let (mut eval_condition, c) = emit_tacky_for_exp(condition);
+        eval_condition.push(Instruction::JumpIfZero(c, end_label.clone()));
+        eval_condition.extend(emit_tacky_for_statement(*then_clause));
+        eval_condition.push(Instruction::Label(end_label));
+        eval_condition
+    } else {
+        let else_label = make_label("else");
+        let end_label = make_label("if_end");
+        let (mut eval_condition, c) = emit_tacky_for_exp(condition);
+        eval_condition.push(Instruction::JumpIfZero(c, else_label.clone()));
+        eval_condition.extend(emit_tacky_for_statement(*then_clause));
+        eval_condition.extend(vec![
+            Instruction::Jump(end_label.clone()),
+            Instruction::Label(else_label),
+        ]);
+        eval_condition.extend(emit_tacky_for_statement(*else_clause.unwrap()));
+        eval_condition.push(Instruction::Label(end_label));
+        eval_condition
     }
 }
 
