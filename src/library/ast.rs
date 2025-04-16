@@ -76,6 +76,11 @@ pub enum Statement {
         else_clause: Option<Box<Statement>>,
     },
     Null,
+    Labelled {
+        label: String,
+        statement: Box<Statement>,
+    },
+    Goto(String),
 }
 
 #[derive(Debug, PartialEq)]

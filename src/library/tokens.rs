@@ -10,6 +10,7 @@ pub enum Token {
     KWVoid,
     KWIf,
     KWElse,
+    KWGoto,
 
     // Punctuation
     OpenParen,

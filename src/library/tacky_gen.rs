@@ -271,6 +271,14 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
             else_clause,
         } => emit_tacky_for_if_statement(condition, then_clause, else_clause),
         Statement::Null => vec![],
+        Statement::Labelled { label, statement } => {
+            let mut instructions = emit_tacky_for_statement(*statement);
+            instructions.insert(0, Instruction::Label(label));
+            instructions
+        }
+        Statement::Goto(label) => {
+            vec![Instruction::Jump(label)]
+        }
     }
 }
 

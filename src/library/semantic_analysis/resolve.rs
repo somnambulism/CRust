@@ -1,4 +1,3 @@
-use core::panic;
 use std::collections::HashMap;
 
 use crate::library::{
@@ -117,6 +116,11 @@ impl Resolver {
                 else_clause: else_clause.map(|stmt| self.resolve_statement(*stmt).into()),
             },
             Statement::Null => Statement::Null,
+            Statement::Labelled { label, statement } => Statement::Labelled {
+                label,
+                statement: self.resolve_statement(*statement).into(),
+            },
+            _ => statement,
         }
     }
 

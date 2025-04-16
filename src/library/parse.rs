@@ -327,6 +327,29 @@ impl Parser {
                     else_clause,
                 })
             }
+            // labelled statement
+            Ok(Token::Identifier(_)) => {
+                if self.tokens.peek_nth(1)? == &Token::Colon {
+                    let label = self.parse_id()?;
+                    self.expect(Token::Colon)?;
+                    let statement = self.parse_statement()?;
+                    Ok(Statement::Labelled {
+                        label: label.clone(),
+                        statement: Box::new(statement),
+                    })
+                } else {
+                    let exp = self.parse_exp(0)?;
+                    self.expect(Token::Semicolon)?;
+                    Ok(Statement::Expression(exp))
+                }
+            }
+            // "goto" <identifier> ";"
+            Ok(Token::KWGoto) => {
+                self.tokens.take_token()?;
+                let label = self.parse_id()?;
+                self.expect(Token::Semicolon)?;
+                Ok(Statement::Goto(label))
+            }
             // <exp> ";"
             _ => {
                 let exp = self.parse_exp(0)?;
@@ -410,5 +433,36 @@ mod tests {
         let mut parser = Parser::new(vec![]);
         let result = parser.parse_program();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn labelled_statement() {
+        let mut parser = Parser::new(vec![
+            Token::Identifier("label".to_string()),
+            Token::Colon,
+            Token::KWReturn,
+            Token::Constant(42),
+            Token::Semicolon,
+        ]);
+        assert_eq!(
+            parser.parse_statement().unwrap(),
+            Statement::Labelled {
+                label: "label".to_string(),
+                statement: Box::new(Statement::Return(Exp::Constant(42))),
+            }
+        );
+    }
+
+    #[test]
+    fn goto_statement() {
+        let mut parser = Parser::new(vec![
+            Token::KWGoto,
+            Token::Identifier("label".to_string()),
+            Token::Semicolon,
+        ]);
+        assert_eq!(
+            parser.parse_statement().unwrap(),
+            Statement::Goto("label".to_string())
+        );
     }
 }
