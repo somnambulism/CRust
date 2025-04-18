@@ -1,12 +1,20 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    ast::{BlockItem, Declaration, Exp, FunctionDefinition, Program, Statement},
+    ast::{Block, BlockItem, Declaration, Exp, FunctionDefinition, Program, Statement},
     unique_ids::make_named_temporary,
 };
 
+#[derive(Clone)]
+struct VarEntry {
+    unique_name: String,
+    from_current_block: bool,
+}
+
+type VarMap = HashMap<String, VarEntry>;
+
 pub struct Resolver {
-    var_map: HashMap<String, String>,
+    var_map: VarMap,
 }
 
 impl Resolver {
@@ -14,6 +22,21 @@ impl Resolver {
         Resolver {
             var_map: HashMap::new(),
         }
+    }
+
+    fn copy_variable_map(&self) -> VarMap {
+        self.var_map
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    VarEntry {
+                        unique_name: v.unique_name.clone(),
+                        from_current_block: false,
+                    },
+                )
+            })
+            .collect()
     }
 
     fn resolve_exp(&self, exp: Exp) -> Exp {
@@ -37,7 +60,7 @@ impl Resolver {
                 // rename var from map
                 self.var_map.get(v.as_str()).map_or_else(
                     || panic!("Undeclared variable: {}", v),
-                    |name| Exp::Var(name.clone()),
+                    |v| Exp::Var(v.unique_name.clone()),
                 )
             }
             // recursively process operands for unary, binary and conditional
@@ -82,27 +105,35 @@ impl Resolver {
     }
 
     fn resolve_declaration(&mut self, Declaration { name, init }: Declaration) -> Declaration {
-        if self.var_map.contains_key(&name) {
-            panic!("Duplicate variable declaration");
-        }
-
-        // Generate a unique name and add it to the map
-        let unique_name = make_named_temporary(&name);
-        self.var_map.insert(name, unique_name.clone());
-
-        // resolve the initializer if there is one
-        let resolved_init = match init {
-            Some(e) => Some(self.resolve_exp(e)),
-            None => None,
-        };
-
-        Declaration {
-            name: unique_name,
-            init: resolved_init,
+        match self.var_map.get(&name) {
+            Some(VarEntry {
+                unique_name: _,
+                from_current_block: true,
+            }) => {
+                // variable is present in the map and was declared in the current block
+                panic!("Duplicate variable declaration");
+            }
+            _ => {
+                // variable isn't in the map, or was defined in an outer scope;
+                // generate a unique name and add it to the map
+                let unique_name = make_named_temporary(&name);
+                self.var_map.insert(
+                    name.clone(),
+                    VarEntry {
+                        unique_name: unique_name.clone(),
+                        from_current_block: true,
+                    },
+                );
+                let resolved_init = init.map(|e| self.resolve_exp(e));
+                Declaration {
+                    name: unique_name,
+                    init: resolved_init,
+                }
+            }
         }
     }
 
-    fn resolve_statement(&self, statement: Statement) -> Statement {
+    fn resolve_statement(&mut self, statement: Statement) -> Statement {
         match statement {
             Statement::Return(e) => Statement::Return(self.resolve_exp(e)),
             Statement::Expression(e) => Statement::Expression(self.resolve_exp(e)),
@@ -115,6 +146,13 @@ impl Resolver {
                 then_clause: self.resolve_statement(*then_clause).into(),
                 else_clause: else_clause.map(|stmt| self.resolve_statement(*stmt).into()),
             },
+            Statement::Compound(block) => {
+                let saved = self.var_map.clone();
+                self.var_map = self.copy_variable_map();
+                let resolved = self.resolve_block(block);
+                self.var_map = saved;
+                Statement::Compound(resolved)
+            }
             Statement::Null => Statement::Null,
             Statement::Labelled { label, statement } => Statement::Labelled {
                 label,
@@ -139,14 +177,20 @@ impl Resolver {
         }
     }
 
+    fn resolve_block(&mut self, Block(items): Block) -> Block {
+        let resolved_items = items
+            .into_iter()
+            .map(|item| self.resolve_block_item(item))
+            .collect();
+        Block(resolved_items)
+    }
+
     fn resolve_function_def(
         &mut self,
         FunctionDefinition { name, body }: FunctionDefinition,
     ) -> FunctionDefinition {
-        let resolved_body: Vec<BlockItem> = body
-            .into_iter()
-            .map(|item| self.resolve_block_item(item))
-            .collect();
+        self.var_map.clear();
+        let resolved_body = self.resolve_block(body);
 
         FunctionDefinition {
             name,

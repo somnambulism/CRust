@@ -1,7 +1,7 @@
 use super::{
     ast::{
-        BinaryOperator as AstBinaryOperator, BlockItem, CompoundAssignOperator, Declaration, Exp,
-        FunctionDefinition as AstFunction, Program as AstProgram, Statement,
+        BinaryOperator as AstBinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration,
+        Exp, FunctionDefinition as AstFunction, Program as AstProgram, Statement,
         UnaryOperator as AstUnaryOperator,
     },
     tacky::{BinaryOperator, FunctionDefinition, Instruction, Program, TackyVal, UnaryOperator},
@@ -199,17 +199,17 @@ fn emit_inc_dec(inner: Exp, is_inc: bool, is_post: bool) -> (Vec<Instruction>, T
 
         let one = TackyVal::Constant(1);
 
-        let mut instuctions = vec![];
+        let mut instructions = vec![];
 
         if is_post {
             // save the original value in a temporary variable
-            instuctions.push(Instruction::Copy {
+            instructions.push(Instruction::Copy {
                 src: dst.clone(),
                 dst: tmp.clone(),
             });
         }
 
-        instuctions.push(Instruction::Binary {
+        instructions.push(Instruction::Binary {
             op: op,
             src1: dst.clone(),
             src2: one,
@@ -217,7 +217,7 @@ fn emit_inc_dec(inner: Exp, is_inc: bool, is_post: bool) -> (Vec<Instruction>, T
         });
 
         let result = if is_post { tmp } else { dst };
-        (instuctions, result)
+        (instructions, result)
     } else {
         panic!("Internal error: ++/-- can only be applied to variables");
     }
@@ -270,6 +270,13 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
             then_clause,
             else_clause,
         } => emit_tacky_for_if_statement(condition, then_clause, else_clause),
+        Statement::Compound(block) => {
+            let Block(items) = block;
+            items
+                .into_iter()
+                .flat_map(emit_tacky_for_block_item)
+                .collect()
+        }
         Statement::Null => vec![],
         Statement::Labelled { label, statement } => {
             let mut instructions = emit_tacky_for_statement(*statement);
@@ -334,6 +341,7 @@ fn emit_tacky_for_if_statement(
 }
 
 fn emit_tacky_for_function(AstFunction { name, body }: AstFunction) -> FunctionDefinition {
+    let Block(body) = body;
     let body_instructions: Vec<Instruction> = body
         .into_iter()
         .flat_map(emit_tacky_for_block_item)

@@ -1,7 +1,7 @@
 use super::{
     ast::{
-        BinaryOperator, BlockItem, CompoundAssignOperator, Declaration, Exp, FunctionDefinition,
-        Program, Statement, UnaryOperator,
+        BinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration, Exp,
+        FunctionDefinition, Program, Statement, UnaryOperator,
     },
     tok_stream::TokenStream,
     tokens::Token,
@@ -287,6 +287,9 @@ impl Parser {
 
     // <statement> ::= "return" <exp> ";"
     //              | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+    //              | "goto" <identifier> ";"
+    //              | <identifier> ":" <statement>
+    //              | <block>
     //              | <exp> ";"
     //              | ";"
     fn parse_statement(&mut self) -> Result<Statement, String> {
@@ -350,6 +353,7 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(Statement::Goto(label))
             }
+            Ok(Token::OpenBrace) => Ok(Statement::Compound(self.parse_block()?)),
             // <exp> ";"
             _ => {
                 let exp = self.parse_exp(0)?;
@@ -368,6 +372,17 @@ impl Parser {
         }
     }
 
+    fn parse_block(&mut self) -> Result<Block, String> {
+        self.expect(Token::OpenBrace)?;
+        let mut block = Vec::new();
+        while self.tokens.peek()? != &Token::CloseBrace {
+            let block_item = self.parse_block_item()?;
+            block.push(block_item);
+        }
+        self.expect(Token::CloseBrace)?;
+        Ok(Block(block))
+    }
+
     // Top level
 
     // <function> ::= "int" <identifier> "(" "void" ")" "{" { <block-item> } "}"
@@ -377,15 +392,8 @@ impl Parser {
         self.expect(Token::OpenParen)?;
         self.expect(Token::KWVoid)?;
         self.expect(Token::CloseParen)?;
-        self.expect(Token::OpenBrace)?;
 
-        let mut body = Vec::new();
-        while self.tokens.peek()? != &Token::CloseBrace {
-            let next_block_item = self.parse_block_item()?;
-            body.push(next_block_item);
-        }
-
-        self.expect(Token::CloseBrace)?;
+        let body = self.parse_block()?;
         Ok(FunctionDefinition {
             name: fun_name,
             body: body,

@@ -75,6 +75,7 @@ pub enum Statement {
         then_clause: Box<Statement>,
         else_clause: Option<Box<Statement>>,
     },
+    Compound(Block),
     Null,
     Labelled {
         label: String,
@@ -90,9 +91,12 @@ pub enum BlockItem {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct Block(pub Vec<BlockItem>);
+
+#[derive(Debug, PartialEq)]
 pub struct FunctionDefinition {
     pub name: String,
-    pub body: Vec<BlockItem>,
+    pub body: Block,
 }
 
 #[derive(Debug, PartialEq)]

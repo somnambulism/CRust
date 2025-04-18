@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    ast::{BlockItem, FunctionDefinition, Program, Statement},
+    ast::{Block, BlockItem, FunctionDefinition, Program, Statement},
     unique_ids::make_label,
 };
 
@@ -32,6 +32,7 @@ impl LabelsResolver {
                     statement: self.resolve_labelled_statement(*statement).into(),
                 }
             }
+
             Statement::If {
                 condition,
                 then_clause,
@@ -41,6 +42,17 @@ impl LabelsResolver {
                 then_clause: Box::new(self.resolve_labelled_statement(*then_clause)),
                 else_clause: else_clause.map(|e| Box::new(self.resolve_labelled_statement(*e))),
             },
+
+            Statement::Compound(block) => {
+                let Block(items) = block;
+                let resolved_items = items
+                    .into_iter()
+                    .map(|item| self.resolve_labelled_block_item(item))
+                    .collect();
+                let resolved_block = Block(resolved_items);
+                Statement::Compound(resolved_block)
+            }
+
             _ => statement,
         }
     }
@@ -66,6 +78,15 @@ impl LabelsResolver {
                 then_clause: Box::new(self.resolve_goto_statement(*then_clause)),
                 else_clause: else_clause.map(|e| Box::new(self.resolve_goto_statement(*e))),
             },
+            Statement::Compound(block) => {
+                let Block(items) = block;
+                let resolved_items = items
+                    .into_iter()
+                    .map(|item| self.resolve_goto_block_item(item))
+                    .collect();
+                let resolved_block = Block(resolved_items);
+                Statement::Compound(resolved_block)
+            }
             _ => statement,
         }
     }
@@ -90,19 +111,25 @@ impl LabelsResolver {
         }
     }
 
-    fn resolve_function_def(
-        &mut self,
-        FunctionDefinition { name, body }: FunctionDefinition,
-    ) -> FunctionDefinition {
-        let resolved_labels_body: Vec<BlockItem> = body
+    fn resolve_block(&mut self, Block(items): Block) -> Block {
+        let resolved_labels_items: Vec<BlockItem> = items
             .into_iter()
             .map(|item| self.resolve_labelled_block_item(item))
             .collect();
 
-        let resolved_body: Vec<BlockItem> = resolved_labels_body
+        let resolved_items: Vec<BlockItem> = resolved_labels_items
             .into_iter()
             .map(|item| self.resolve_goto_block_item(item))
             .collect();
+
+        Block(resolved_items)
+    }
+
+    fn resolve_function_def(
+        &mut self,
+        FunctionDefinition { name, body }: FunctionDefinition,
+    ) -> FunctionDefinition {
+        let resolved_body = self.resolve_block(body);
 
         FunctionDefinition {
             name,
