@@ -235,6 +235,11 @@ impl Lexer {
             "void" => Token::KWVoid,
             "if" => Token::KWIf,
             "else" => Token::KWElse,
+            "do" => Token::KWDo,
+            "while" => Token::KWWhile,
+            "for" => Token::KWFor,
+            "break" => Token::KWBreak,
+            "continue" => Token::KWContinue,
             "goto" => Token::KWGoto,
             _ => Token::Identifier(s.to_string()),
         }

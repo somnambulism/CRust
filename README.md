@@ -90,3 +90,4 @@ the source code into C...
     The code for increment/decrement is ugly, needs to be refactored (but I won't).
 - `if` statements and conditional expression (ternary `expression ? expression : expression`).
    - Extra: labels and `goto` operator.
+- Loops (`for`, `while`, `do-while`)

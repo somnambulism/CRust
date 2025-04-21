@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    ast::{Block, BlockItem, Declaration, Exp, FunctionDefinition, Program, Statement},
+    ast::{Block, BlockItem, Declaration, Exp, ForInit, FunctionDefinition, Program, Statement},
     unique_ids::make_named_temporary,
 };
 
@@ -104,6 +104,10 @@ impl Resolver {
         }
     }
 
+    fn resolve_optional_exp(&mut self, exp: Option<Exp>) -> Option<Exp> {
+        exp.map(|e| self.resolve_exp(e))
+    }
+
     fn resolve_declaration(&mut self, Declaration { name, init }: Declaration) -> Declaration {
         match self.var_map.get(&name) {
             Some(VarEntry {
@@ -133,6 +137,16 @@ impl Resolver {
         }
     }
 
+    fn resolve_for_init(&mut self, init: ForInit) -> ForInit {
+        match init {
+            ForInit::InitExp(e) => ForInit::InitExp(self.resolve_optional_exp(e)),
+            ForInit::InitDecl(d) => {
+                let resolved_d = self.resolve_declaration(d);
+                ForInit::InitDecl(resolved_d)
+            }
+        }
+    }
+
     fn resolve_statement(&mut self, statement: Statement) -> Statement {
         match statement {
             Statement::Return(e) => Statement::Return(self.resolve_exp(e)),
@@ -146,6 +160,48 @@ impl Resolver {
                 then_clause: self.resolve_statement(*then_clause).into(),
                 else_clause: else_clause.map(|stmt| self.resolve_statement(*stmt).into()),
             },
+            Statement::While {
+                condition,
+                body,
+                id,
+            } => Statement::While {
+                condition: self.resolve_exp(condition),
+                body: Box::new(self.resolve_statement(*body)),
+                id,
+            },
+            Statement::DoWhile {
+                body,
+                condition,
+                id,
+            } => Statement::DoWhile {
+                body: Box::new(self.resolve_statement(*body)),
+                condition: self.resolve_exp(condition),
+                id,
+            },
+            Statement::For {
+                init,
+                condition,
+                post,
+                body,
+                id,
+            } => {
+                let saved = self.var_map.clone();
+                self.var_map = self.copy_variable_map();
+
+                let resolved_init = self.resolve_for_init(init);
+                let resolved_body = self.resolve_statement(*body);
+
+                let resolved_for = Statement::For {
+                    init: resolved_init,
+                    condition: self.resolve_optional_exp(condition),
+                    post: self.resolve_optional_exp(post),
+                    body: Box::new(resolved_body),
+                    id,
+                };
+
+                self.var_map = saved;
+                resolved_for
+            }
             Statement::Compound(block) => {
                 let saved = self.var_map.clone();
                 self.var_map = self.copy_variable_map();
@@ -153,7 +209,7 @@ impl Resolver {
                 self.var_map = saved;
                 Statement::Compound(resolved)
             }
-            Statement::Null => Statement::Null,
+            Statement::Null | Statement::Break(_) | Statement::Continue(_) => statement,
             Statement::Labelled { label, statement } => Statement::Labelled {
                 label,
                 statement: self.resolve_statement(*statement).into(),

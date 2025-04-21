@@ -67,6 +67,12 @@ pub struct Declaration {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum ForInit {
+    InitDecl(Declaration),
+    InitExp(Option<Exp>),
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Statement {
     Return(Exp),
     Expression(Exp),
@@ -76,6 +82,25 @@ pub enum Statement {
         else_clause: Option<Box<Statement>>,
     },
     Compound(Block),
+    Break(String),
+    Continue(String),
+    While {
+        condition: Exp,
+        body: Box<Statement>,
+        id: String,
+    },
+    DoWhile {
+        body: Box<Statement>,
+        condition: Exp,
+        id: String,
+    },
+    For {
+        init: ForInit,
+        condition: Option<Exp>,
+        post: Option<Exp>,
+        body: Box<Statement>,
+        id: String,
+    },
     Null,
     Labelled {
         label: String,

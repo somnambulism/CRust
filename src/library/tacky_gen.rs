@@ -1,12 +1,22 @@
+use std::iter::once;
+
 use super::{
     ast::{
         BinaryOperator as AstBinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration,
-        Exp, FunctionDefinition as AstFunction, Program as AstProgram, Statement,
+        Exp, ForInit, FunctionDefinition as AstFunction, Program as AstProgram, Statement,
         UnaryOperator as AstUnaryOperator,
     },
     tacky::{BinaryOperator, FunctionDefinition, Instruction, Program, TackyVal, UnaryOperator},
     unique_ids::{make_label, make_temporary},
 };
+
+fn break_label(label: String) -> String {
+    format!("break.{}", label)
+}
+
+fn continue_label(label: String) -> String {
+    format!("continue.{}", label)
+}
 
 fn convert_op(op: AstUnaryOperator) -> UnaryOperator {
     match op {
@@ -277,6 +287,25 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
                 .flat_map(emit_tacky_for_block_item)
                 .collect()
         }
+        Statement::Break(id) => vec![Instruction::Jump(break_label(id))],
+        Statement::Continue(id) => vec![Instruction::Jump(continue_label(id))],
+        Statement::DoWhile {
+            body,
+            condition,
+            id,
+        } => emit_tacky_for_do_loop(*body, condition, id),
+        Statement::While {
+            condition,
+            body,
+            id,
+        } => emit_tacky_for_while_loop(condition, *body, id),
+        Statement::For {
+            init,
+            condition,
+            post,
+            body,
+            id,
+        } => emit_tacky_for_for_loop(init, condition, post, *body, id),
         Statement::Null => vec![],
         Statement::Labelled { label, statement } => {
             let mut instructions = emit_tacky_for_statement(*statement);
@@ -292,19 +321,25 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
 fn emit_tacky_for_block_item(item: BlockItem) -> Vec<Instruction> {
     match item {
         BlockItem::S(s) => emit_tacky_for_statement(s),
-        BlockItem::D(Declaration {
+        BlockItem::D(d) => emit_declaration(d),
+    }
+}
+
+fn emit_declaration(d: Declaration) -> Vec<Instruction> {
+    match d {
+        Declaration {
             name,
             init: Some(e),
-        }) => {
+        } => {
             // treat declaration with initializer like an assignment expression
             let (eval_assignment, _assignment_result) =
                 emit_tacky_for_exp(Exp::Assignment(Exp::Var(name).into(), e.into()));
             eval_assignment
         }
-        BlockItem::D(Declaration {
+        Declaration {
             name: _,
             init: None,
-        }) => {
+        } => {
             // don't generate instructions for declaration without initializer
             vec![]
         }
@@ -338,6 +373,78 @@ fn emit_tacky_for_if_statement(
         eval_condition.push(Instruction::Label(end_label));
         eval_condition
     }
+}
+
+fn emit_tacky_for_do_loop(body: Statement, condition: Exp, id: String) -> Vec<Instruction> {
+    let start_label = make_label("do_loop_start");
+    let cont_label = continue_label(id.clone());
+    let br_label = break_label(id);
+    let (eval_condition, c) = emit_tacky_for_exp(condition);
+    let mut instructions = vec![Instruction::Label(start_label.clone())];
+    instructions.extend(emit_tacky_for_statement(body));
+    instructions.push(Instruction::Label(cont_label));
+    instructions.extend(eval_condition);
+    instructions.extend(vec![
+        Instruction::JumpIfNotZero(c, start_label),
+        Instruction::Label(br_label),
+    ]);
+    instructions
+}
+
+fn emit_tacky_for_while_loop(condition: Exp, body: Statement, id: String) -> Vec<Instruction> {
+    let cont_label = continue_label(id.clone());
+    let br_label = break_label(id);
+    let (eval_condition, c) = emit_tacky_for_exp(condition);
+    let mut instructions = vec![Instruction::Label(cont_label.clone())];
+    instructions.extend(eval_condition);
+    instructions.push(Instruction::JumpIfZero(c, br_label.clone()));
+    instructions.extend(emit_tacky_for_statement(body));
+    instructions.extend(vec![
+        Instruction::Jump(cont_label),
+        Instruction::Label(br_label),
+    ]);
+    instructions
+}
+
+fn emit_tacky_for_for_loop(
+    init: ForInit,
+    condition: Option<Exp>,
+    post: Option<Exp>,
+    body: Statement,
+    id: String,
+) -> Vec<Instruction> {
+    // generate some labels
+    let start_label = make_label("for_start");
+    let cont_label = continue_label(id.clone());
+    let br_label = break_label(id);
+    let mut for_init_instructions = match init {
+        ForInit::InitDecl(d) => emit_declaration(d),
+        ForInit::InitExp(e) => match e.map(emit_tacky_for_exp) {
+            Some((instrs, _)) => instrs,
+            None => vec![],
+        },
+    };
+    let test_condition = match condition.map(emit_tacky_for_exp) {
+        Some((instrs, v)) => instrs
+            .into_iter()
+            .chain(once(Instruction::JumpIfZero(v, br_label.clone())))
+            .collect(),
+        None => vec![],
+    };
+    let post_instructions = match post.map(emit_tacky_for_exp) {
+        Some((instrs, _post_result)) => instrs,
+        None => vec![],
+    };
+    for_init_instructions.push(Instruction::Label(start_label.clone()));
+    for_init_instructions.extend(test_condition);
+    for_init_instructions.extend(emit_tacky_for_statement(body));
+    for_init_instructions.push(Instruction::Label(cont_label));
+    for_init_instructions.extend(post_instructions);
+    for_init_instructions.extend(vec![
+        Instruction::Jump(start_label),
+        Instruction::Label(br_label),
+    ]);
+    for_init_instructions
 }
 
 fn emit_tacky_for_function(AstFunction { name, body }: AstFunction) -> FunctionDefinition {

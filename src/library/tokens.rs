@@ -10,6 +10,11 @@ pub enum Token {
     KWVoid,
     KWIf,
     KWElse,
+    KWDo,
+    KWWhile,
+    KWFor,
+    KWBreak,
+    KWContinue,
     KWGoto,
 
     // Punctuation

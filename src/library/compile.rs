@@ -6,6 +6,7 @@ use std::{
 
 use crate::library::{emit::CodeEmitter, lex::Lexer, parse::Parser, settings::current_platform};
 
+use super::semantic_analysis::label_loops::LoopsLabeller;
 use super::semantic_analysis::labels::LabelsResolver;
 use super::semantic_analysis::resolve::Resolver;
 use super::{
@@ -38,11 +39,15 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
     }
 
     // Semantic analysis
+    // 1. Label gotos
     let mut labels_resolver = LabelsResolver::new();
-    let validated_ast = labels_resolver.resolve(ast);
-
+    let labelled_ast = labels_resolver.resolve(ast);
+    // 2. Resolve variables
     let mut variable_resolver = Resolver::new();
-    let validated_ast = variable_resolver.resolve(validated_ast);
+    let resolved_ast = variable_resolver.resolve(labelled_ast);
+    // 3. Label loops
+    let mut loops_labeller = LoopsLabeller::new();
+    let validated_ast = loops_labeller.label_loops(resolved_ast);
 
     if *stage == Stage::Validate {
         return;
