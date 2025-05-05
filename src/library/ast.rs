@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 #[derive(Debug, PartialEq)]
 pub enum UnaryOperator {
     Complement,
@@ -72,6 +74,8 @@ pub enum ForInit {
     InitExp(Option<Exp>),
 }
 
+pub type SwitchCases = HashSet<Option<i32>>;
+
 #[derive(Debug, PartialEq)]
 pub enum Statement {
     Return(Exp),
@@ -100,6 +104,21 @@ pub enum Statement {
         post: Option<Exp>,
         body: Box<Statement>,
         id: String,
+    },
+    Switch {
+        condition: Exp,
+        body: Box<Statement>,
+        cases: SwitchCases,
+        id: String,
+    },
+    Case {
+        condition: i32,
+        body: Box<Statement>,
+        switch_label: String,
+    },
+    Default {
+        body: Box<Statement>,
+        switch_label: String,
     },
     Null,
     Labelled {

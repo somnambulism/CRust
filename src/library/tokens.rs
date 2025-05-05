@@ -16,6 +16,9 @@ pub enum Token {
     KWBreak,
     KWContinue,
     KWGoto,
+    KWSwitch,
+    KWCase,
+    KWDefault,
 
     // Punctuation
     OpenParen,

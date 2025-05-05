@@ -53,6 +53,54 @@ impl LabelsResolver {
                 Statement::Compound(resolved_block)
             }
 
+            Statement::Switch {
+                condition,
+                body,
+                cases,
+                id,
+            } => Statement::Switch {
+                condition,
+                body: Box::new(self.resolve_labelled_statement(*body)),
+                cases,
+                id,
+            },
+            Statement::Default { body, switch_label } => Statement::Default {
+                body: Box::new(self.resolve_labelled_statement(*body)),
+                switch_label,
+            },
+
+            Statement::DoWhile {
+                body,
+                condition,
+                id,
+            } => Statement::DoWhile {
+                body: Box::new(self.resolve_labelled_statement(*body)),
+                condition,
+                id,
+            },
+            Statement::While {
+                condition,
+                body,
+                id,
+            } => Statement::While {
+                condition,
+                body: Box::new(self.resolve_labelled_statement(*body)),
+                id,
+            },
+            Statement::For {
+                init,
+                condition,
+                post,
+                body,
+                id,
+            } => Statement::For {
+                init,
+                condition,
+                post,
+                body: Box::new(self.resolve_labelled_statement(*body)),
+                id,
+            },
+
             _ => statement,
         }
     }
@@ -87,6 +135,61 @@ impl LabelsResolver {
                 let resolved_block = Block(resolved_items);
                 Statement::Compound(resolved_block)
             }
+            Statement::Switch {
+                condition,
+                body,
+                cases,
+                id,
+            } => Statement::Switch {
+                condition,
+                body: Box::new(self.resolve_goto_statement(*body)),
+                cases,
+                id,
+            },
+            Statement::Case {
+                condition,
+                body,
+                switch_label,
+            } => Statement::Case {
+                condition,
+                body: Box::new(self.resolve_goto_statement(*body)),
+                switch_label,
+            },
+            Statement::Default { body, switch_label } => Statement::Default {
+                body: Box::new(self.resolve_goto_statement(*body)),
+                switch_label,
+            },
+            Statement::DoWhile {
+                body,
+                condition,
+                id,
+            } => Statement::DoWhile {
+                body: Box::new(self.resolve_goto_statement(*body)),
+                condition,
+                id,
+            },
+            Statement::While {
+                condition,
+                body,
+                id,
+            } => Statement::While {
+                condition,
+                body: Box::new(self.resolve_goto_statement(*body)),
+                id,
+            },
+            Statement::For {
+                init,
+                condition,
+                post,
+                body,
+                id,
+            } => Statement::For {
+                init,
+                condition,
+                post,
+                body: Box::new(self.resolve_goto_statement(*body)),
+                id,
+            },
             _ => statement,
         }
     }

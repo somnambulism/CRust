@@ -91,3 +91,4 @@ the source code into C...
 - `if` statements and conditional expression (ternary `expression ? expression : expression`).
    - Extra: labels and `goto` operator.
 - Loops (`for`, `while`, `do-while`)
+   - Extra: `switch` statements

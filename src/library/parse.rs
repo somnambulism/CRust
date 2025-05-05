@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::{
     ast::{
         BinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration, Exp, ForInit,
@@ -320,6 +322,9 @@ impl Parser {
     //              | "while" "(" <exp> ")" <statement>
     //              | "do" <statement> "while" "(" <exp> ")" ";"
     //              | "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement>
+    //              | "switch" "(" <exp> ")" <statement>
+    //              | "case" <int> ":" <statement>
+    //              | "default" ":" <statement>
     //              | <exp> ";"
     //              | ";"
     fn parse_statement(&mut self) -> Result<Statement, String> {
@@ -355,6 +360,21 @@ impl Parser {
                     else_clause,
                 })
             }
+            // "switch" "(" <exp> ")" <statement>
+            Ok(Token::KWSwitch) => {
+                // consume switch keyword
+                self.tokens.take_token()?;
+                self.expect(Token::OpenParen)?;
+                let condition = self.parse_exp(0)?;
+                self.expect(Token::CloseParen)?;
+                let body = Box::new(self.parse_statement()?);
+                Ok(Statement::Switch {
+                    condition,
+                    body,
+                    cases: HashSet::new(),
+                    id: "".to_string(),
+                })
+            }
             // labelled statement
             Ok(Token::Identifier(_)) => {
                 if self.tokens.peek_nth(1)? == &Token::Colon {
@@ -370,6 +390,33 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     Ok(Statement::Expression(exp))
                 }
+            }
+            // "case" <int> ":" <statement>
+            Ok(Token::KWCase) => {
+                self.tokens.take_token()?;
+                let condition = match self.tokens.take_token()? {
+                    Token::Constant(c) => c,
+                    other => {
+                        return Err(format!("Expected a constant, found {:?}", other));
+                    }
+                };
+                self.expect(Token::Colon)?;
+                let body = Box::new(self.parse_statement()?);
+                Ok(Statement::Case {
+                    condition,
+                    body,
+                    switch_label: "".to_string(),
+                })
+            }
+            // "default" ":"
+            Ok(Token::KWDefault) => {
+                self.tokens.take_token()?;
+                self.expect(Token::Colon)?;
+                let body = Box::new(self.parse_statement()?);
+                Ok(Statement::Default {
+                    body,
+                    switch_label: "".to_string(),
+                })
             }
             // "goto" <identifier> ";"
             Ok(Token::KWGoto) => {

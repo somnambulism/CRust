@@ -241,6 +241,9 @@ impl Lexer {
             "break" => Token::KWBreak,
             "continue" => Token::KWContinue,
             "goto" => Token::KWGoto,
+            "switch" => Token::KWSwitch,
+            "case" => Token::KWCase,
+            "default" => Token::KWDefault,
             _ => Token::Identifier(s.to_string()),
         }
     }

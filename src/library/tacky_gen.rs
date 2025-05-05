@@ -2,9 +2,7 @@ use std::iter::once;
 
 use super::{
     ast::{
-        BinaryOperator as AstBinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration,
-        Exp, ForInit, FunctionDefinition as AstFunction, Program as AstProgram, Statement,
-        UnaryOperator as AstUnaryOperator,
+        BinaryOperator as AstBinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration, Exp, ForInit, FunctionDefinition as AstFunction, Program as AstProgram, Statement, SwitchCases, UnaryOperator as AstUnaryOperator
     },
     tacky::{BinaryOperator, FunctionDefinition, Instruction, Program, TackyVal, UnaryOperator},
     unique_ids::{make_label, make_temporary},
@@ -16,6 +14,14 @@ fn break_label(label: String) -> String {
 
 fn continue_label(label: String) -> String {
     format!("continue.{}", label)
+}
+
+fn case_label(condition: i32, switch_label: String) -> String {
+    format!("switch.{}.case.{}", switch_label, condition)
+}
+
+fn default_label(switch_label: String) -> String {
+    format!("switch.{}.default", switch_label)
 }
 
 fn convert_op(op: AstUnaryOperator) -> UnaryOperator {
@@ -306,6 +312,26 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
             body,
             id,
         } => emit_tacky_for_for_loop(init, condition, post, *body, id),
+        Statement::Switch {
+            condition,
+            body,
+            cases,
+            id,
+        } => emit_tacky_for_switch(condition, *body, cases, id),
+        Statement::Case {
+            condition,
+            body,
+            switch_label,
+        } => {
+            let mut instructions = emit_tacky_for_statement(*body);
+            instructions.insert(0, Instruction::Label(case_label(condition, switch_label)));
+            instructions
+        }
+        Statement::Default { body, switch_label } => {
+            let mut instructions = emit_tacky_for_statement(*body);
+            instructions.insert(0, Instruction::Label(default_label(switch_label)));
+            instructions
+        }
         Statement::Null => vec![],
         Statement::Labelled { label, statement } => {
             let mut instructions = emit_tacky_for_statement(*statement);
@@ -445,6 +471,33 @@ fn emit_tacky_for_for_loop(
         Instruction::Label(br_label),
     ]);
     for_init_instructions
+}
+
+fn emit_tacky_for_switch(condition: Exp, body: Statement, cases: SwitchCases, id: String) -> Vec<Instruction> {
+    let mut instructions = vec![];
+    let br_label = break_label(id.clone());
+    let (eval_condition, c) = emit_tacky_for_exp(condition);
+    instructions.extend(eval_condition);
+
+    for case in &cases {
+        if let Some(value) = case {
+            let temp_var_name = make_temporary();
+            let temp_var = TackyVal::Var(temp_var_name);
+            instructions.push(Instruction::Binary { op: BinaryOperator::Equal, src1: c.clone(), src2: TackyVal::Constant(*value), dst: temp_var.clone() });
+            instructions.push(Instruction::JumpIfNotZero(temp_var, case_label(*value, id.clone())))
+        }
+    }
+
+    if cases.contains(&None) {
+        instructions.push(Instruction::Jump(default_label(id.clone())));
+    } else {
+        instructions.push(Instruction::Jump(br_label.clone()));
+    }
+
+    instructions.extend(emit_tacky_for_statement(body));
+    instructions.push(Instruction::Label(br_label));
+
+    instructions
 }
 
 fn emit_tacky_for_function(AstFunction { name, body }: AstFunction) -> FunctionDefinition {
