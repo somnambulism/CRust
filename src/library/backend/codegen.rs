@@ -11,6 +11,8 @@ use crate::library::{
     },
 };
 
+const PARAM_PASSING_REGS: [Reg; 4] = [Reg::CX, Reg::DX, Reg::R8, Reg::R9];
+
 fn convert_val(val: TackyVal) -> Operand {
     match val {
         TackyVal::Constant(i) => Operand::Imm(i),
@@ -61,6 +63,62 @@ fn convert_cond_code(cond_code: TackyBinaryOp) -> CondCode {
         TackyBinaryOp::LessOrEqual => CondCode::LE,
         _ => panic!("Internal error: not a condition code"),
     }
+}
+
+fn convert_function_call(f: &str, args: Vec<TackyVal>, dst: TackyVal) -> Vec<Instruction> {
+    let split_idx = args.len().min(4);
+    let (reg_args, stack_args) = args.split_at(split_idx);
+    // adjust stack alignment
+
+    let stack_padding: usize = if stack_args.len() % 2 == 0 { 0 } else { 8 };
+
+    let mut instructions = if stack_padding == 0 {
+        vec![]
+    } else {
+        vec![Instruction::AllocateStack(
+            stack_padding.try_into().unwrap(),
+        )]
+    };
+
+    // pass args in registers
+    instructions.extend(reg_args.iter().enumerate().map(|(idx, arg)| {
+        let r = &PARAM_PASSING_REGS[idx];
+        let assembly_arg = convert_val(arg.clone());
+        Instruction::Mov(assembly_arg, Operand::Reg(r.clone()))
+    }));
+
+    // pass args on the stack
+    for arg in stack_args.iter().rev() {
+        let assembly_arg = convert_val(arg.clone());
+        match assembly_arg {
+            Operand::Imm(_) | Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
+            _ => {
+                // copy into a register before pushing
+                instructions.extend(vec![
+                    Instruction::Mov(assembly_arg, Operand::Reg(Reg::AX)),
+                    Instruction::Push(Operand::Reg(Reg::AX)),
+                ]);
+            }
+        }
+    }
+
+    // call the function
+    instructions.push(Instruction::Call(f.to_string()));
+
+    // adjust stack pointer
+    let bytes_to_remove = (8 * stack_args.len()) + stack_padding;
+    let dealloc = if bytes_to_remove == 0 {
+        vec![]
+    } else {
+        vec![Instruction::DeallocateStack(bytes_to_remove)]
+    };
+    instructions.extend(dealloc);
+
+    // retrieve return value
+    let assembly_dst = convert_val(dst);
+    instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), assembly_dst));
+
+    instructions
 }
 
 fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
@@ -179,23 +237,47 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
             ]
         }
         TackyInstruction::Label(l) => vec![Instruction::Label(l)],
+        TackyInstruction::FunCall { f, args, dst } => convert_function_call(&f, args, dst),
     }
+}
+
+fn pass_params(param_list: Vec<String>) -> Vec<Instruction> {
+    let split_idx = param_list.len().min(4);
+    let (register_params, stack_params) = param_list.split_at(split_idx);
+
+    // pass parameter in register
+    let mut instructions: Vec<Instruction> = register_params
+        .iter()
+        .enumerate()
+        .map(|(idx, param)| {
+            let r = &PARAM_PASSING_REGS[idx];
+            Instruction::Mov(Operand::Reg(r.clone()), Operand::Pseudo(param.to_string()))
+        })
+        .collect();
+
+    instructions.extend(stack_params.iter().enumerate().map(|(idx, param)| {
+        // first param passed on stack has idx 0 and passed at Stack(16)
+        let stk = Operand::Stack((16 + 8 * idx).try_into().unwrap());
+        Instruction::Mov(stk, Operand::Pseudo(param.to_string()))
+    }));
+
+    instructions
 }
 
 fn convert_function(function_definition: FunctionDefinition) -> AssemblyFunction {
-    let instructions = function_definition
-        .body
-        .into_iter()
-        .flat_map(convert_instruction)
-        .collect();
-    AssemblyFunction {
-        name: function_definition.name,
-        instructions,
+    let FunctionDefinition { name, body, params } = function_definition;
+    let mut instructions = pass_params(params);
+    for instruction in body {
+        instructions.extend(convert_instruction(instruction));
     }
+
+    AssemblyFunction { name, instructions }
 }
 
 pub fn generate(program: Program) -> AssemblyProgram {
+    let Program { functions: fn_defs } = program;
+
     AssemblyProgram {
-        function: convert_function(program.function),
+        function: fn_defs.into_iter().map(convert_function).collect(),
     }
 }

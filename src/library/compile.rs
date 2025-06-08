@@ -9,6 +9,7 @@ use crate::library::{emit::CodeEmitter, lex::Lexer, parse::Parser, settings::cur
 use super::semantic_analysis::label_loops::LoopsLabeller;
 use super::semantic_analysis::labels::LabelsResolver;
 use super::semantic_analysis::resolve::Resolver;
+use super::semantic_analysis::typecheck::TypeChecker;
 use super::{
     backend::{codegen, instruction_fixup, replace_pseudos},
     settings::Stage,
@@ -42,12 +43,15 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
     // 1. Label gotos
     let mut labels_resolver = LabelsResolver::new();
     let labelled_ast = labels_resolver.resolve(ast);
-    // 2. Resolve variables
+    // 2. Resolve identifiers
     let mut variable_resolver = Resolver::new();
     let resolved_ast = variable_resolver.resolve(labelled_ast);
-    // 3. Label loops
+    // 3. Label loops and break/continue statements
     let mut loops_labeller = LoopsLabeller::new();
     let validated_ast = loops_labeller.label_loops(resolved_ast);
+    // 4. Typecheck definitions and uses of functions and variables
+    let mut typeckecher = TypeChecker::new();
+    typeckecher.typecheck(&validated_ast);
 
     if *stage == Stage::Validate {
         return;
@@ -75,9 +79,9 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
         let _ = writeln!(writer, "{:#?}", asm_ast);
     }
     // 2. Replace pseudoregisters with Stack operands
-    let (asm_ast1, stack_size) = replace_pseudos::replace_pseudos(asm_ast);
+    let asm_ast1 = replace_pseudos::replace_pseudos(asm_ast, &mut typeckecher.symbol_table);
     // 3. Fixup instructions
-    let asm_ast2 = instruction_fixup::fixup_program(stack_size, asm_ast1);
+    let asm_ast2 = instruction_fixup::fixup_program(asm_ast1, &typeckecher.symbol_table);
 
     if *stage == Stage::Codegen {
         return;
@@ -85,7 +89,11 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
 
     let mut asm_filename = PathBuf::from(src_file);
     asm_filename.set_extension("s");
-    let mut emitter =
-        CodeEmitter::new(current_platform(), &asm_filename.to_string_lossy()).unwrap();
+    let mut emitter = CodeEmitter::new(
+        current_platform(),
+        &asm_filename.to_string_lossy(),
+        typeckecher.symbol_table,
+    )
+    .unwrap();
     emitter.emit(&asm_ast2).unwrap();
 }

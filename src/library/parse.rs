@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use super::{
     ast::{
         BinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration, Exp, ForInit,
-        FunctionDefinition, Program, Statement, UnaryOperator,
+        FunctionDeclaration, Program, Statement, UnaryOperator, VariableDeclaration,
     },
     tok_stream::TokenStream,
     tokens::Token,
@@ -138,17 +138,17 @@ impl Parser {
     }
 
     // Helper function to parse postfix increment and decrement
-    fn parse_postfix_increment(&mut self, id: String) -> Result<Exp, String> {
+    fn parse_postfix_increment(&mut self, exp: Exp) -> Result<Exp, String> {
         match self.tokens.peek()? {
             Token::DoublePlus => {
                 self.tokens.take_token()?;
-                return Ok(Exp::PostfixIncrement(Box::new(Exp::Var(id))));
+                return Ok(Exp::PostfixIncrement(Box::new(exp)));
             }
             Token::DoubleHyphen => {
                 self.tokens.take_token()?;
-                return Ok(Exp::PostfixDecrement(Box::new(Exp::Var(id))));
+                return Ok(Exp::PostfixDecrement(Box::new(exp)));
             }
-            _ => return Ok(Exp::Var(id)),
+            _ => return Ok(exp),
         }
     }
 
@@ -162,15 +162,31 @@ impl Parser {
     }
 
     // <factor> ::= <int> | <identifier> |<unop> <factor> | "(" <exp> ")"
+    //              | <identifier> "(" [ <argument-list ] ")"
     fn parse_factor(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
         match next_token {
             // constant
             Token::Constant(_) => self.parse_int(),
-            // identifier
+            // variable or function call
             Token::Identifier(_) => {
                 let id = self.parse_id()?;
-                self.parse_postfix_increment(id)
+                let exp = if self.tokens.peek()? == &Token::OpenParen {
+                    // It's a function call - consume open paren, then parse args
+                    self.tokens.take_token()?;
+                    let args = if self.tokens.peek()? == &Token::CloseParen {
+                        vec![]
+                    } else {
+                        self.parse_argument_list()?
+                    };
+                    self.expect(Token::CloseParen)?;
+                    Exp::FunCall { f: id, args }
+                } else {
+                    // It's a variable
+                    Exp::Var(id)
+                };
+
+                self.parse_postfix_increment(exp)
             }
             // unary expression
             Token::Hyphen | Token::Tilde | Token::Bang => {
@@ -196,7 +212,7 @@ impl Parser {
                     if self.tokens.peek_nth(1)? == &Token::CloseParen {
                         let id = self.parse_id()?;
                         let _ = self.tokens.take_token();
-                        return self.parse_postfix_increment(id);
+                        return self.parse_postfix_increment(Exp::Var(id));
                     }
                 }
                 let e = self.parse_exp(0);
@@ -205,6 +221,20 @@ impl Parser {
             }
             t => Err(format!("Expected a factor, found {:?}", t)),
         }
+    }
+
+    // <argument-list> ::= <exp> { "," <exp> }
+    fn parse_argument_list(&mut self) -> Result<Vec<Exp>, String> {
+        let mut args = vec![];
+
+        args.push(self.parse_exp(0)?);
+
+        while self.tokens.peek()? == &Token::Comma {
+            self.tokens.take_token()?;
+            args.push(self.parse_exp(0)?);
+        }
+
+        Ok(args)
     }
 
     fn parse_exp(&mut self, min_prec: i32) -> Result<Exp, String> {
@@ -271,8 +301,8 @@ impl Parser {
 
     // Declarations
 
-    // <declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
-    fn parse_declaration(&mut self) -> Result<Declaration, String> {
+    // <variable-declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
+    fn parse_variable_declaration(&mut self) -> Result<VariableDeclaration, String> {
         self.expect(Token::KWInt)?;
         let var_name = self.parse_id()?;
 
@@ -294,18 +324,73 @@ impl Parser {
             }
         };
 
-        Ok(Declaration {
+        Ok(VariableDeclaration {
             name: var_name,
             init,
         })
     }
 
+    // <param-list> ::= "void" | "int" <identifier> { "," "int" <identifier> }
+    fn parse_param_list(&mut self) -> Result<Vec<String>, String> {
+        if self.tokens.peek()? == &Token::KWVoid {
+            self.tokens.take_token()?;
+            Ok(vec![])
+        } else {
+            let mut params = vec![];
+
+            loop {
+                self.expect(Token::KWInt)?;
+                let next_param = self.parse_id()?;
+                params.push(next_param);
+
+                match self.tokens.peek()? {
+                    Token::Comma => {
+                        self.tokens.take_token()?;
+                    }
+                    _ => break,
+                }
+            }
+
+            Ok(params)
+        }
+    }
+
+    // <function-declaration> ::= "int" <identifier> "(" <param-list ")" ( <block> | ";" )
+    fn parse_function_declaration(&mut self) -> Result<FunctionDeclaration, String> {
+        self.expect(Token::KWInt)?;
+        let fun_name = self.parse_id()?;
+        self.expect(Token::OpenParen)?;
+        let params = self.parse_param_list()?;
+        self.expect(Token::CloseParen)?;
+        let body = match self.tokens.peek()? {
+            Token::Semicolon => {
+                self.tokens.take_token()?;
+                None
+            }
+            _ => Some(self.parse_block()?),
+        };
+        Ok(FunctionDeclaration {
+            name: fun_name,
+            params,
+            body,
+        })
+    }
+
+    fn parse_declaration(&mut self) -> Result<Declaration, String> {
+        match self.tokens.npeek(3) {
+            [Token::KWInt, Token::Identifier(_), Token::OpenParen] => {
+                Ok(Declaration::FunDecl(self.parse_function_declaration()?))
+            }
+            _ => Ok(Declaration::VarDecl(self.parse_variable_declaration()?)),
+        }
+    }
+
     // Statements and blocks
 
-    // <for-init> ::= <declaration> | [ <exp> ] ";"
+    // <for-init> ::= <variable-declaration> | [ <exp> ] ";"
     fn parse_for_init(&mut self) -> Result<ForInit, String> {
         if self.tokens.peek()? == &Token::KWInt {
-            Ok(ForInit::InitDecl(self.parse_declaration()?))
+            Ok(ForInit::InitDecl(self.parse_variable_declaration()?))
         } else {
             let opt_e = self.parse_optional_exp(Token::Semicolon)?;
             Ok(ForInit::InitExp(opt_e))
@@ -523,29 +608,21 @@ impl Parser {
     }
 
     // Top level
-
-    // <function> ::= "int" <identifier> "(" "void" ")" "{" { <block-item> } "}"
-    fn parse_function_definition(&mut self) -> Result<FunctionDefinition, String> {
-        self.expect(Token::KWInt)?;
-        let fun_name = self.parse_id()?;
-        self.expect(Token::OpenParen)?;
-        self.expect(Token::KWVoid)?;
-        self.expect(Token::CloseParen)?;
-
-        let body = self.parse_block()?;
-        Ok(FunctionDefinition {
-            name: fun_name,
-            body: body,
-        })
-    }
-
     pub fn parse_program(&mut self) -> Result<Program, String> {
-        let fun_def = self.parse_function_definition()?;
-        if self.tokens.is_empty() {
-            Ok(Program { function: fun_def })
-        } else {
-            Err("Unexpected tokens after function definition".to_string())
+        // let fun_def = self.parse_function_definition()?;
+        // if self.tokens.is_empty() {
+        //     Ok(Program { function: fun_def })
+        // } else {
+        //     Err("Unexpected tokens after function definition".to_string())
+        // }
+        let mut fun_decls = vec![];
+
+        while !self.tokens.is_empty() {
+            let next_decl = self.parse_function_declaration()?;
+            fun_decls.push(next_decl);
         }
+
+        Ok(Program(fun_decls))
     }
 }
 

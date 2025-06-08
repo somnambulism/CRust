@@ -1,53 +1,58 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    ast::{Block, BlockItem, Declaration, Exp, ForInit, FunctionDefinition, Program, Statement},
-    unique_ids::make_named_temporary,
+    ast::{
+        Block, BlockItem, Declaration, Exp, ForInit, FunctionDeclaration, Program, Statement,
+        VariableDeclaration,
+    },
+    util::unique_ids::make_named_temporary,
 };
 
 #[derive(Clone)]
 struct VarEntry {
     unique_name: String,
-    from_current_block: bool,
+    from_current_scope: bool,
+    has_linkage: bool,
 }
 
 type VarMap = HashMap<String, VarEntry>;
 
 pub struct Resolver {
-    var_map: VarMap,
+    id_map: VarMap,
 }
 
 impl Resolver {
     pub fn new() -> Self {
         Resolver {
-            var_map: HashMap::new(),
+            id_map: HashMap::new(),
         }
     }
 
     fn copy_variable_map(&self) -> VarMap {
-        self.var_map
+        self.id_map
             .iter()
             .map(|(k, v)| {
                 (
                     k.clone(),
                     VarEntry {
                         unique_name: v.unique_name.clone(),
-                        from_current_block: false,
+                        from_current_scope: false,
+                        has_linkage: v.has_linkage,
                     },
                 )
             })
             .collect()
     }
 
-    fn resolve_exp(&self, exp: Exp) -> Exp {
+    fn resolve_exp(&self, exp: &Exp) -> Exp {
         match exp {
             Exp::Assignment(left, right) => {
                 // validate that lhs is an lvalue
-                if let Exp::Var(_) = *left {
+                if let Exp::Var(_) = left.as_ref() {
                     // recursively process lhs and rhs
                     return Exp::Assignment(
-                        self.resolve_exp(*left).into(),
-                        self.resolve_exp(*right).into(),
+                        self.resolve_exp(left).into(),
+                        self.resolve_exp(right).into(),
                     );
                 } else {
                     panic!(
@@ -58,37 +63,47 @@ impl Resolver {
             }
             Exp::Var(v) => {
                 // rename var from map
-                self.var_map.get(v.as_str()).map_or_else(
+                self.id_map.get(v.as_str()).map_or_else(
                     || panic!("Undeclared variable: {}", v),
                     |v| Exp::Var(v.unique_name.clone()),
                 )
             }
             // recursively process operands for unary, binary and conditional
-            Exp::Unary(op, e) => Exp::Unary(op, Box::new(self.resolve_exp(*e))),
+            Exp::Unary(op, e) => Exp::Unary(op.clone(), Box::new(self.resolve_exp(e))),
             Exp::Binary(op, e1, e2) => Exp::Binary(
-                op,
-                Box::new(self.resolve_exp(*e1)),
-                Box::new(self.resolve_exp(*e2)),
+                op.clone(),
+                Box::new(self.resolve_exp(e1)),
+                Box::new(self.resolve_exp(e2)),
             ),
             Exp::Conditional {
                 condition,
                 then_result,
                 else_result,
             } => Exp::Conditional {
-                condition: self.resolve_exp(*condition).into(),
-                then_result: self.resolve_exp(*then_result).into(),
-                else_result: self.resolve_exp(*else_result).into(),
+                condition: self.resolve_exp(condition).into(),
+                then_result: self.resolve_exp(then_result).into(),
+                else_result: self.resolve_exp(else_result).into(),
             },
+            Exp::FunCall { f, args } => {
+                let fn_name = self.id_map.get(f.as_str()).map_or_else(
+                    || panic!("Undeclared function: {}", f),
+                    |v| v.unique_name.clone(),
+                );
+                Exp::FunCall {
+                    f: fn_name,
+                    args: args.iter().map(|e| self.resolve_exp(e)).collect(),
+                }
+            }
             // Nothing to do for constant
-            Exp::Constant(_) => exp,
+            Exp::Constant(c) => Exp::Constant(*c),
             Exp::CompoundAssign(op, lhs, rhs) => {
                 // validate that lhs is an lvalue
-                if let Exp::Var(_) = *lhs {
+                if let Exp::Var(_) = lhs.as_ref() {
                     // recursively process lhs and rhs
                     return Exp::CompoundAssign(
-                        op,
-                        Box::new(self.resolve_exp(*lhs)),
-                        Box::new(self.resolve_exp(*rhs)),
+                        op.clone(),
+                        Box::new(self.resolve_exp(lhs)),
+                        Box::new(self.resolve_exp(rhs)),
                     );
                 } else {
                     panic!(
@@ -97,22 +112,22 @@ impl Resolver {
                     )
                 }
             }
-            Exp::PrefixIncrement(e) => Exp::PrefixIncrement(Box::new(self.resolve_exp(*e))),
-            Exp::PrefixDecrement(e) => Exp::PrefixDecrement(Box::new(self.resolve_exp(*e))),
-            Exp::PostfixIncrement(e) => Exp::PostfixIncrement(Box::new(self.resolve_exp(*e))),
-            Exp::PostfixDecrement(e) => Exp::PostfixDecrement(Box::new(self.resolve_exp(*e))),
+            Exp::PrefixIncrement(e) => Exp::PrefixIncrement(Box::new(self.resolve_exp(e))),
+            Exp::PrefixDecrement(e) => Exp::PrefixDecrement(Box::new(self.resolve_exp(e))),
+            Exp::PostfixIncrement(e) => Exp::PostfixIncrement(Box::new(self.resolve_exp(e))),
+            Exp::PostfixDecrement(e) => Exp::PostfixDecrement(Box::new(self.resolve_exp(e))),
         }
     }
 
     fn resolve_optional_exp(&mut self, exp: Option<Exp>) -> Option<Exp> {
-        exp.map(|e| self.resolve_exp(e))
+        exp.map(|e| self.resolve_exp(&e))
     }
 
-    fn resolve_declaration(&mut self, Declaration { name, init }: Declaration) -> Declaration {
-        match self.var_map.get(&name) {
+    fn resolve_local_ver_helper(&mut self, name: &str) -> String {
+        match self.id_map.get(name) {
             Some(VarEntry {
-                unique_name: _,
-                from_current_block: true,
+                from_current_scope: true,
+                ..
             }) => {
                 // variable is present in the map and was declared in the current block
                 panic!("Duplicate variable declaration");
@@ -120,20 +135,31 @@ impl Resolver {
             _ => {
                 // variable isn't in the map, or was defined in an outer scope;
                 // generate a unique name and add it to the map
-                let unique_name = make_named_temporary(&name);
-                self.var_map.insert(
-                    name.clone(),
+                let unique_name = make_named_temporary(name);
+                self.id_map.insert(
+                    name.to_string(),
                     VarEntry {
                         unique_name: unique_name.clone(),
-                        from_current_block: true,
+                        from_current_scope: true,
+                        has_linkage: false,
                     },
                 );
-                let resolved_init = init.map(|e| self.resolve_exp(e));
-                Declaration {
-                    name: unique_name,
-                    init: resolved_init,
-                }
+                unique_name
             }
+        }
+    }
+
+    fn resolve_local_var_declaration(
+        &mut self,
+        VariableDeclaration { name, init }: VariableDeclaration,
+    ) -> VariableDeclaration {
+        let unique_name = self.resolve_local_ver_helper(&name);
+
+        let resolved_init = init.map(|init| self.resolve_exp(&init));
+
+        VariableDeclaration {
+            name: unique_name,
+            init: resolved_init,
         }
     }
 
@@ -141,7 +167,7 @@ impl Resolver {
         match init {
             ForInit::InitExp(e) => ForInit::InitExp(self.resolve_optional_exp(e)),
             ForInit::InitDecl(d) => {
-                let resolved_d = self.resolve_declaration(d);
+                let resolved_d = self.resolve_local_var_declaration(d);
                 ForInit::InitDecl(resolved_d)
             }
         }
@@ -149,14 +175,14 @@ impl Resolver {
 
     fn resolve_statement(&mut self, statement: Statement) -> Statement {
         match statement {
-            Statement::Return(e) => Statement::Return(self.resolve_exp(e)),
-            Statement::Expression(e) => Statement::Expression(self.resolve_exp(e)),
+            Statement::Return(e) => Statement::Return(self.resolve_exp(&e)),
+            Statement::Expression(e) => Statement::Expression(self.resolve_exp(&e)),
             Statement::If {
                 condition,
                 then_clause,
                 else_clause,
             } => Statement::If {
-                condition: self.resolve_exp(condition),
+                condition: self.resolve_exp(&condition),
                 then_clause: self.resolve_statement(*then_clause).into(),
                 else_clause: else_clause.map(|stmt| self.resolve_statement(*stmt).into()),
             },
@@ -165,7 +191,7 @@ impl Resolver {
                 body,
                 id,
             } => Statement::While {
-                condition: self.resolve_exp(condition),
+                condition: self.resolve_exp(&condition),
                 body: Box::new(self.resolve_statement(*body)),
                 id,
             },
@@ -175,7 +201,7 @@ impl Resolver {
                 id,
             } => Statement::DoWhile {
                 body: Box::new(self.resolve_statement(*body)),
-                condition: self.resolve_exp(condition),
+                condition: self.resolve_exp(&condition),
                 id,
             },
             Statement::For {
@@ -185,8 +211,8 @@ impl Resolver {
                 body,
                 id,
             } => {
-                let saved = self.var_map.clone();
-                self.var_map = self.copy_variable_map();
+                let saved = self.id_map.clone();
+                self.id_map = self.copy_variable_map();
 
                 let resolved_init = self.resolve_for_init(init);
                 let resolved_body = self.resolve_statement(*body);
@@ -199,14 +225,14 @@ impl Resolver {
                     id,
                 };
 
-                self.var_map = saved;
+                self.id_map = saved;
                 resolved_for
             }
             Statement::Compound(block) => {
-                let saved = self.var_map.clone();
-                self.var_map = self.copy_variable_map();
+                let saved = self.id_map.clone();
+                self.id_map = self.copy_variable_map();
                 let resolved = self.resolve_block(block);
-                self.var_map = saved;
+                self.id_map = saved;
                 Statement::Compound(resolved)
             }
             Statement::Switch {
@@ -215,7 +241,7 @@ impl Resolver {
                 cases,
                 id,
             } => Statement::Switch {
-                condition: self.resolve_exp(condition),
+                condition: self.resolve_exp(&condition),
                 body: self.resolve_statement(*body).into(),
                 cases,
                 id,
@@ -251,7 +277,8 @@ impl Resolver {
             }
             BlockItem::D(d) => {
                 // resolving a declaration does change the variable map
-                let resolved_d = self.resolve_declaration(d);
+                // let resolved_d = self.resolve_declaration(d);
+                let resolved_d = self.resolve_local_declaration(d);
                 BlockItem::D(resolved_d)
             }
         }
@@ -265,22 +292,63 @@ impl Resolver {
         Block(resolved_items)
     }
 
-    fn resolve_function_def(
-        &mut self,
-        FunctionDefinition { name, body }: FunctionDefinition,
-    ) -> FunctionDefinition {
-        self.var_map.clear();
-        let resolved_body = self.resolve_block(body);
-
-        FunctionDefinition {
-            name,
-            body: resolved_body,
+    fn resolve_local_declaration(&mut self, d: Declaration) -> Declaration {
+        match d {
+            Declaration::VarDecl(vd) => {
+                let resolved_vd = self.resolve_local_var_declaration(vd);
+                Declaration::VarDecl(resolved_vd)
+            }
+            Declaration::FunDecl(FunctionDeclaration { body: Some(_), .. }) => {
+                panic!("nested function declarations are not allowed")
+            }
+            Declaration::FunDecl(fd) => {
+                let resolved_fd = self.resolve_function_declaration(fd);
+                Declaration::FunDecl(resolved_fd)
+            }
         }
     }
 
-    pub fn resolve(&mut self, program: Program) -> Program {
-        Program {
-            function: self.resolve_function_def(program.function),
+    fn resolve_params(&mut self, params: &Vec<String>) -> Vec<String> {
+        params
+            .iter()
+            .map(|param| self.resolve_local_ver_helper(&param))
+            .collect()
+    }
+
+    fn resolve_function_declaration(&mut self, func: FunctionDeclaration) -> FunctionDeclaration {
+        if let Some(VarEntry {
+            from_current_scope: true,
+            has_linkage: false,
+            ..
+        }) = self.id_map.get(&func.name)
+        {
+            panic!("Duplicate declaration {}", func.name);
+        } else {
+            let new_entry = VarEntry {
+                unique_name: func.name.clone(),
+                from_current_scope: true,
+                has_linkage: true,
+            };
+            self.id_map.insert(func.name.clone(), new_entry);
+            let saved = self.id_map.clone();
+            self.id_map = self.copy_variable_map();
+            let resolved_params = self.resolve_params(&func.params);
+            let resolved_body = func.body.map(|body| self.resolve_block(body));
+            self.id_map = saved;
+            FunctionDeclaration {
+                params: resolved_params,
+                body: resolved_body,
+                ..func
+            }
         }
+    }
+
+    pub fn resolve(&mut self, Program(fn_decls): Program) -> Program {
+        Program(
+            fn_decls
+                .into_iter()
+                .map(|fn_decl| self.resolve_function_declaration(fn_decl))
+                .collect(),
+        )
     }
 }

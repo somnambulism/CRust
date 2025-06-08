@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{Result, Write};
 
 use super::assembly::{BinaryOperator, CondCode, FunctionDefinition, Program, Reg, UnaryOperator};
+use super::symbols::SymbolTable;
 use super::{
     assembly::{Instruction, Operand},
     settings::Target,
@@ -10,21 +11,34 @@ use super::{
 pub struct CodeEmitter {
     platform: Target,
     file: File,
+    symbols: SymbolTable,
 }
 
 impl CodeEmitter {
-    pub fn new(platform: Target, filename: &str) -> Result<Self> {
+    pub fn new(platform: Target, filename: &str, symbols: SymbolTable) -> Result<Self> {
         let file = File::create(filename)?;
-        Ok(Self { platform, file })
+        Ok(Self {
+            platform,
+            file,
+            symbols,
+        })
+    }
+
+    fn show_reg(&self, reg: &Reg) -> String {
+        match reg {
+            Reg::AX => "%eax".to_string(),
+            Reg::CX => "%ecx".to_string(),
+            Reg::DX => "%edx".to_string(),
+            Reg::R8 => "%r8d".to_string(),
+            Reg::R9 => "%r9d".to_string(),
+            Reg::R10 => "%r10d".to_string(),
+            Reg::R11 => "%r11d".to_string(),
+        }
     }
 
     fn show_operand(&self, operand: &Operand) -> String {
         match operand {
-            Operand::Reg(Reg::AX) => "%eax".to_string(),
-            Operand::Reg(Reg::CX) => "%ecx".to_string(),
-            Operand::Reg(Reg::DX) => "%edx".to_string(),
-            Operand::Reg(Reg::R10) => "%r10d".to_string(),
-            Operand::Reg(Reg::R11) => "%r11d".to_string(),
+            Operand::Reg(r) => self.show_reg(r),
             Operand::Imm(i) => format!("${}", i),
             Operand::Stack(i) => format!("{}(%rbp)", i),
             // printing out pseudoregister is only for debugging
@@ -32,13 +46,40 @@ impl CodeEmitter {
         }
     }
 
+    fn show_byte_reg(&self, reg: &Reg) -> String {
+        match reg {
+            Reg::AX => "%al".to_string(),
+            Reg::CX => "%cl".to_string(),
+            Reg::DX => "%dl".to_string(),
+            Reg::R8 => "%r8b".to_string(),
+            Reg::R9 => "%r9b".to_string(),
+            Reg::R10 => "%r10b".to_string(),
+            Reg::R11 => "%r11b".to_string(),
+        }
+    }
+
     fn show_byte_operand(&self, operand: &Operand) -> String {
         match operand {
-            Operand::Reg(Reg::AX) => "%al".to_string(),
-            Operand::Reg(Reg::CX) => "%cl".to_string(),
-            Operand::Reg(Reg::DX) => "%dl".to_string(),
-            Operand::Reg(Reg::R10) => "%r10b".to_string(),
-            Operand::Reg(Reg::R11) => "%r11b".to_string(),
+            Operand::Reg(r) => self.show_byte_reg(r),
+            other => self.show_operand(other),
+        }
+    }
+
+    fn show_quarword_reg(&self, reg: &Reg) -> String {
+        match reg {
+            Reg::AX => "%rax".to_string(),
+            Reg::CX => "%rcx".to_string(),
+            Reg::DX => "%rdx".to_string(),
+            Reg::R8 => "%r8".to_string(),
+            Reg::R9 => "%r9".to_string(),
+            Reg::R10 => "%r10".to_string(),
+            Reg::R11 => "%r11".to_string(),
+        }
+    }
+
+    fn show_quadword_operand(&self, operand: &Operand) -> String {
+        match operand {
+            Operand::Reg(r) => self.show_quarword_reg(r),
             other => self.show_operand(other),
         }
     }
@@ -47,6 +88,20 @@ impl CodeEmitter {
         match self.platform {
             Target::OsX => format!("_{}", name),
             _ => name.to_string(),
+        }
+    }
+
+    fn show_fun_name(&self, f: &str) -> String {
+        match self.platform {
+            Target::OsX => format!("_{}", f),
+            Target::Linux => {
+                if self.symbols.is_defined(f) {
+                    f.to_string()
+                } else {
+                    format!("{}@PLT", f)
+                }
+            }
+            Target::Windows => f.to_string(),
         }
     }
 
@@ -145,6 +200,13 @@ impl CodeEmitter {
             ),
             Instruction::Label(lbl) => writeln!(self.file, "{}:", self.show_local_label(lbl)),
             Instruction::AllocateStack(i) => writeln!(self.file, "\tsubq ${}, %rsp", i),
+            Instruction::DeallocateStack(i) => writeln!(self.file, "\taddq ${}, %rsp", i),
+            Instruction::Push(op) => {
+                writeln!(self.file, "\tpushq {}", self.show_quadword_operand(op))
+            }
+            Instruction::Call(f) => {
+                writeln!(self.file, "\tcall {}", self.show_fun_name(f))
+            }
             Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
         }
     }
@@ -169,7 +231,9 @@ impl CodeEmitter {
     }
 
     pub fn emit(&mut self, program: &Program) -> Result<()> {
-        self.emit_function(&program.function)?;
+        for function in &program.function {
+            self.emit_function(&function)?;
+        }
         self.emit_stack_note()?;
         Ok(())
     }

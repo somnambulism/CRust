@@ -2,10 +2,12 @@ use std::iter::once;
 
 use super::{
     ast::{
-        BinaryOperator as AstBinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration, Exp, ForInit, FunctionDefinition as AstFunction, Program as AstProgram, Statement, SwitchCases, UnaryOperator as AstUnaryOperator
+        BinaryOperator as AstBinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration,
+        Exp, ForInit, FunctionDeclaration as AstFunction, Program as AstProgram, Statement,
+        SwitchCases, UnaryOperator as AstUnaryOperator, VariableDeclaration,
     },
     tacky::{BinaryOperator, FunctionDefinition, Instruction, Program, TackyVal, UnaryOperator},
-    unique_ids::{make_label, make_temporary},
+    util::unique_ids::{make_label, make_temporary},
 };
 
 fn break_label(label: String) -> String {
@@ -116,6 +118,7 @@ fn emit_tacky_for_exp(exp: Exp) -> (Vec<Instruction>, TackyVal) {
             then_result,
             else_result,
         } => emit_conditional_expression(*condition, *then_result, *else_result),
+        Exp::FunCall { f, args } => emit_fun_call(f.as_str(), args),
     }
 }
 
@@ -269,6 +272,20 @@ fn emit_conditional_expression(condition: Exp, e1: Exp, e2: Exp) -> (Vec<Instruc
     (instructions, dst)
 }
 
+fn emit_fun_call(f: &str, args: Vec<Exp>) -> (Vec<Instruction>, TackyVal) {
+    let dst_name = make_temporary();
+    let dst = TackyVal::Var(dst_name);
+    let (arg_instructions, arg_vals): (Vec<Vec<Instruction>>, Vec<TackyVal>) =
+        args.into_iter().map(|arg| emit_tacky_for_exp(arg)).unzip();
+    let mut instructions: Vec<Instruction> = arg_instructions.into_iter().flatten().collect();
+    instructions.push(Instruction::FunCall {
+        f: f.to_string(),
+        args: arg_vals,
+        dst: dst.clone(),
+    });
+    (instructions, dst)
+}
+
 fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
     match stmt {
         Statement::Return(e) => {
@@ -347,13 +364,20 @@ fn emit_tacky_for_statement(stmt: Statement) -> Vec<Instruction> {
 fn emit_tacky_for_block_item(item: BlockItem) -> Vec<Instruction> {
     match item {
         BlockItem::S(s) => emit_tacky_for_statement(s),
-        BlockItem::D(d) => emit_declaration(d),
+        BlockItem::D(d) => emit_local_declaration(d),
     }
 }
 
-fn emit_declaration(d: Declaration) -> Vec<Instruction> {
+fn emit_local_declaration(d: Declaration) -> Vec<Instruction> {
     match d {
-        Declaration {
+        Declaration::VarDecl(vd) => emit_var_declaration(vd),
+        Declaration::FunDecl(_) => vec![],
+    }
+}
+
+fn emit_var_declaration(d: VariableDeclaration) -> Vec<Instruction> {
+    match d {
+        VariableDeclaration {
             name,
             init: Some(e),
         } => {
@@ -362,7 +386,7 @@ fn emit_declaration(d: Declaration) -> Vec<Instruction> {
                 emit_tacky_for_exp(Exp::Assignment(Exp::Var(name).into(), e.into()));
             eval_assignment
         }
-        Declaration {
+        VariableDeclaration {
             name: _,
             init: None,
         } => {
@@ -444,7 +468,7 @@ fn emit_tacky_for_for_loop(
     let cont_label = continue_label(id.clone());
     let br_label = break_label(id);
     let mut for_init_instructions = match init {
-        ForInit::InitDecl(d) => emit_declaration(d),
+        ForInit::InitDecl(d) => emit_var_declaration(d),
         ForInit::InitExp(e) => match e.map(emit_tacky_for_exp) {
             Some((instrs, _)) => instrs,
             None => vec![],
@@ -473,7 +497,12 @@ fn emit_tacky_for_for_loop(
     for_init_instructions
 }
 
-fn emit_tacky_for_switch(condition: Exp, body: Statement, cases: SwitchCases, id: String) -> Vec<Instruction> {
+fn emit_tacky_for_switch(
+    condition: Exp,
+    body: Statement,
+    cases: SwitchCases,
+    id: String,
+) -> Vec<Instruction> {
     let mut instructions = vec![];
     let br_label = break_label(id.clone());
     let (eval_condition, c) = emit_tacky_for_exp(condition);
@@ -483,8 +512,16 @@ fn emit_tacky_for_switch(condition: Exp, body: Statement, cases: SwitchCases, id
         if let Some(value) = case {
             let temp_var_name = make_temporary();
             let temp_var = TackyVal::Var(temp_var_name);
-            instructions.push(Instruction::Binary { op: BinaryOperator::Equal, src1: c.clone(), src2: TackyVal::Constant(*value), dst: temp_var.clone() });
-            instructions.push(Instruction::JumpIfNotZero(temp_var, case_label(*value, id.clone())))
+            instructions.push(Instruction::Binary {
+                op: BinaryOperator::Equal,
+                src1: c.clone(),
+                src2: TackyVal::Constant(*value),
+                dst: temp_var.clone(),
+            });
+            instructions.push(Instruction::JumpIfNotZero(
+                temp_var,
+                case_label(*value, id.clone()),
+            ))
         }
     }
 
@@ -500,24 +537,34 @@ fn emit_tacky_for_switch(condition: Exp, body: Statement, cases: SwitchCases, id
     instructions
 }
 
-fn emit_tacky_for_function(AstFunction { name, body }: AstFunction) -> FunctionDefinition {
-    let Block(body) = body;
-    let body_instructions: Vec<Instruction> = body
-        .into_iter()
-        .flat_map(emit_tacky_for_block_item)
-        .collect();
-    let extra_return = Instruction::Return(TackyVal::Constant(0));
-    FunctionDefinition {
-        name,
-        body: body_instructions
-            .into_iter()
-            .chain(std::iter::once(extra_return))
-            .collect(),
+fn emit_function_declaration(
+    AstFunction { name, params, body }: AstFunction,
+) -> Option<FunctionDefinition> {
+    match body {
+        Some(Block(block_items)) => {
+            let mut body_instructions: Vec<Instruction> = block_items
+                .into_iter()
+                .flat_map(emit_tacky_for_block_item)
+                .collect();
+            let extra_return = Instruction::Return(TackyVal::Constant(0));
+            body_instructions.push(extra_return);
+            Some(FunctionDefinition {
+                name,
+                params,
+                body: body_instructions,
+            })
+        }
+        None => None,
     }
 }
 
 pub fn generate(ast: AstProgram) -> Program {
+    let AstProgram(fn_defs) = ast;
+    let tacky_fn_defs = fn_defs
+        .into_iter()
+        .filter_map(emit_function_declaration)
+        .collect();
     Program {
-        function: emit_tacky_for_function(ast.function),
+        functions: tacky_fn_defs,
     }
 }

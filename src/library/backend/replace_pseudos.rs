@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
-use crate::library::assembly::{FunctionDefinition, Instruction, Operand, Program};
+use crate::library::{
+    assembly::{FunctionDefinition, Instruction, Operand, Program},
+    symbols::SymbolTable,
+};
 
 #[derive(Debug)]
 struct ReplacementState {
-    current_offset: i32,
-    offset_map: HashMap<String, i32>,
+    current_offset: isize,
+    offset_map: HashMap<String, isize>,
 }
 
 impl ReplacementState {
@@ -65,40 +68,46 @@ impl ReplacementState {
                 let new_op = self.replace_operand(op);
                 Instruction::SetCC(code, new_op)
             }
+            Instruction::Push(op) => {
+                let new_op = self.replace_operand(op);
+                Instruction::Push(new_op)
+            }
             Instruction::Ret
             | Instruction::Cdq
             | Instruction::Label(_)
             | Instruction::JmpCC(_, _)
-            | Instruction::Jmp(_) => instruction,
-            Instruction::AllocateStack(_) => {
-                panic!("Internal error: AllocateStack shouldn't be present at this point")
-            }
+            | Instruction::Jmp(_)
+            | Instruction::DeallocateStack(_)
+            | Instruction::Call(_)
+            | Instruction::AllocateStack(_) => instruction,
         }
     }
 }
 
-fn replace_pseudos_in_function(func: FunctionDefinition) -> (FunctionDefinition, i32) {
+fn replace_pseudos_in_function(
+    func: FunctionDefinition,
+    symbol_table: &mut SymbolTable,
+) -> FunctionDefinition {
     let mut state = ReplacementState::new();
     let fixed_instructions = func
         .instructions
         .into_iter()
         .map(|instr| state.replace_pseudos_in_instruction(instr))
         .collect();
-    (
-        FunctionDefinition {
-            name: func.name,
-            instructions: fixed_instructions,
-        },
-        state.current_offset,
-    )
+    symbol_table.set_bytes_required(&func.name, state.current_offset);
+    FunctionDefinition {
+        name: func.name,
+        instructions: fixed_instructions,
+    }
 }
 
-pub fn replace_pseudos(program: Program) -> (Program, i32) {
-    let (fixed_def, last_stack_slot) = replace_pseudos_in_function(program.function);
-    (
-        Program {
-            function: fixed_def,
-        },
-        last_stack_slot,
-    )
+pub fn replace_pseudos(program: Program, symbol_table: &mut SymbolTable) -> Program {
+    let fixed_defs = program
+        .function
+        .into_iter()
+        .map(|fn_def| replace_pseudos_in_function(fn_def, symbol_table))
+        .collect::<Vec<_>>();
+    Program {
+        function: fixed_defs,
+    }
 }

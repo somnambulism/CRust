@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum UnaryOperator {
     Complement,
     Negate,
     Not,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum BinaryOperator {
     Add,
     Subtract,
@@ -29,7 +29,7 @@ pub enum BinaryOperator {
     GreaterOrEqual,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum CompoundAssignOperator {
     PlusEqual,
     MinusEqual,
@@ -60,17 +60,21 @@ pub enum Exp {
         then_result: Box<Exp>,
         else_result: Box<Exp>,
     },
+    FunCall {
+        f: String,
+        args: Vec<Exp>,
+    },
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Declaration {
+pub struct VariableDeclaration {
     pub name: String,
     pub init: Option<Exp>,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum ForInit {
-    InitDecl(Declaration),
+    InitDecl(VariableDeclaration),
     InitExp(Option<Exp>),
 }
 
@@ -138,12 +142,17 @@ pub enum BlockItem {
 pub struct Block(pub Vec<BlockItem>);
 
 #[derive(Debug, PartialEq)]
-pub struct FunctionDefinition {
+pub struct FunctionDeclaration {
     pub name: String,
-    pub body: Block,
+    pub params: Vec<String>,
+    pub body: Option<Block>,
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Program {
-    pub function: FunctionDefinition,
+pub enum Declaration {
+    FunDecl(FunctionDeclaration),
+    VarDecl(VariableDeclaration),
 }
+
+#[derive(Debug, PartialEq)]
+pub struct Program(pub Vec<FunctionDeclaration>);

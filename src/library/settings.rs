@@ -3,9 +3,10 @@ pub enum Stage {
     Lex,
     Parse,
     Validate,
-    Codegen,
     Tacky,
+    Codegen,
     Assembly,
+    Obj,
     Executable,
 }
 

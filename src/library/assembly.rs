@@ -3,6 +3,8 @@ pub enum Reg {
     AX,
     CX,
     DX,
+    R8,
+    R9,
     R10,
     R11,
 }
@@ -12,7 +14,7 @@ pub enum Operand {
     Imm(i32),
     Reg(Reg),
     Pseudo(String),
-    Stack(i32),
+    Stack(isize),
 }
 
 #[derive(Clone, Debug)]
@@ -59,7 +61,10 @@ pub enum Instruction {
     JmpCC(CondCode, String),
     SetCC(CondCode, Operand),
     Label(String),
-    AllocateStack(i32),
+    AllocateStack(isize),
+    DeallocateStack(usize),
+    Push(Operand),
+    Call(String),
     Ret,
 }
 
@@ -71,5 +76,5 @@ pub struct FunctionDefinition {
 
 #[derive(Debug)]
 pub struct Program {
-    pub function: FunctionDefinition,
+    pub function: Vec<FunctionDefinition>,
 }

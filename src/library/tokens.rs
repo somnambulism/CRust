@@ -61,4 +61,5 @@ pub enum Token {
     RightShiftEqual, // >>=
     QuestionMark,
     Colon,
+    Comma,
 }

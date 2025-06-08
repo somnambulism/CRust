@@ -188,6 +188,10 @@ impl Lexer {
                 re: Regex::new("^:").unwrap(),
                 converter: |_s| Token::Colon,
             },
+            TokenDef {
+                re: Regex::new("^,").unwrap(),
+                converter: |_s| Token::Comma,
+            },
         ];
         Lexer { token_defs }
     }

@@ -30,8 +30,15 @@ impl TokenStream {
     pub fn peek_nth(&self, n: usize) -> Result<&Token, String> {
         self.tokens
             .as_slice()
-            .iter().nth(n)
+            .iter()
+            .nth(n)
             .ok_or_else(|| "End of steram".to_string())
+    }
+
+    pub fn npeek(&self, n: usize) -> &[Token] {
+        let len = self.tokens.len();
+        let end = len.min(n);
+        &self.tokens.as_slice()[..end]
     }
 
     pub fn is_empty(&self) -> bool {

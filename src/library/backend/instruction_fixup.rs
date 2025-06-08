@@ -1,5 +1,7 @@
-use crate::library::assembly::{
-    BinaryOperator, FunctionDefinition, Instruction, Operand, Program, Reg,
+use crate::library::{
+    assembly::{BinaryOperator, FunctionDefinition, Instruction, Operand, Program, Reg},
+    symbols::SymbolTable,
+    util::rounding::round_away_from_zero,
 };
 
 fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
@@ -83,17 +85,27 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
     }
 }
 
-fn fixup_function(last_stack_slot: i32, func: FunctionDefinition) -> FunctionDefinition {
-    FunctionDefinition {
+fn fixup_function(func: FunctionDefinition, symbol_table: &SymbolTable) -> FunctionDefinition {
+    let stack_bytes = -symbol_table.get(&func.name).stack_frame_size;
+    let x = FunctionDefinition {
         name: func.name,
-        instructions: std::iter::once(Instruction::AllocateStack(-last_stack_slot))
-            .chain(func.instructions.into_iter().flat_map(fixup_instruction))
-            .collect(),
-    }
+        instructions: std::iter::once(Instruction::AllocateStack(round_away_from_zero(
+            16,
+            stack_bytes,
+        ).try_into().unwrap()))
+        .chain(func.instructions.into_iter().flat_map(fixup_instruction))
+        .collect(),
+    };
+    x
 }
 
-pub fn fixup_program(last_stack_slot: i32, program: Program) -> Program {
+pub fn fixup_program(program: Program, symbol_table: &SymbolTable) -> Program {
+    let fixed_functions = program
+        .function
+        .into_iter()
+        .map(|fn_def| fixup_function(fn_def, symbol_table))
+        .collect();
     Program {
-        function: fixup_function(last_stack_slot, program.function),
+        function: fixed_functions,
     }
 }

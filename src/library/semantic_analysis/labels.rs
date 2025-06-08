@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    ast::{Block, BlockItem, FunctionDefinition, Program, Statement},
-    unique_ids::make_label,
+    ast::{Block, BlockItem, FunctionDeclaration, Program, Statement},
+    util::unique_ids::make_label,
 };
 
 pub struct LabelsResolver {
@@ -228,21 +228,21 @@ impl LabelsResolver {
         Block(resolved_items)
     }
 
-    fn resolve_function_def(
-        &mut self,
-        FunctionDefinition { name, body }: FunctionDefinition,
-    ) -> FunctionDefinition {
-        let resolved_body = self.resolve_block(body);
+    fn resolve_function_def(&mut self, func: FunctionDeclaration) -> FunctionDeclaration {
+        let resolved_body = func.body.map(|body| self.resolve_block(body));
 
-        FunctionDefinition {
-            name,
+        FunctionDeclaration {
             body: resolved_body,
+            ..func
         }
     }
 
-    pub fn resolve(&mut self, program: Program) -> Program {
-        Program {
-            function: self.resolve_function_def(program.function),
-        }
+    pub fn resolve(&mut self, Program(fn_defs): Program) -> Program {
+        Program(
+            fn_defs
+                .into_iter()
+                .map(|fn_def| self.resolve_function_def(fn_def))
+                .collect(),
+        )
     }
 }

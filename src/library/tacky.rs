@@ -53,15 +53,21 @@ pub enum Instruction {
     JumpIfZero(TackyVal, String),
     JumpIfNotZero(TackyVal, String),
     Label(String),
+    FunCall {
+        f: String,
+        args: Vec<TackyVal>,
+        dst: TackyVal,
+    },
 }
 
 #[derive(Debug, PartialEq)]
 pub struct FunctionDefinition {
     pub name: String,
+    pub params: Vec<String>,
     pub body: Vec<Instruction>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Program {
-    pub function: FunctionDefinition,
+    pub functions: Vec<FunctionDefinition>,
 }
