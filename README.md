@@ -92,3 +92,4 @@ the source code into C...
    - Extra: labels and `goto` operator.
 - Loops (`for`, `while`, `do-while`)
    - Extra: `switch` statements
+- Functions
