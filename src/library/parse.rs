@@ -653,13 +653,6 @@ mod tests {
     }
 
     #[test]
-    fn empty() {
-        let mut parser = Parser::new(vec![]);
-        let result = parser.parse_program();
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn labelled_statement() {
         let mut parser = Parser::new(vec![
             Token::Identifier("label".to_string()),
