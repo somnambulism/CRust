@@ -102,17 +102,15 @@ fn convert_function_call(f: &str, args: Vec<TackyVal>, dst: TackyVal) -> Vec<Ins
         }
     }
 
+    // allocate shadow space for the stack
+    instructions.push(Instruction::AllocateStack(32));
+
     // call the function
     instructions.push(Instruction::Call(f.to_string()));
 
-    // adjust stack pointer
-    let bytes_to_remove = (8 * stack_args.len()) + stack_padding;
-    let dealloc = if bytes_to_remove == 0 {
-        vec![]
-    } else {
-        vec![Instruction::DeallocateStack(bytes_to_remove)]
-    };
-    instructions.extend(dealloc);
+    // adjust stack pointer (32 bytes for shadow space + 8 bytes for each stack argument)
+    let bytes_to_remove = 32 + (8 * stack_args.len()) + stack_padding;
+    instructions.push(Instruction::DeallocateStack(bytes_to_remove));
 
     // retrieve return value
     let assembly_dst = convert_val(dst);
@@ -245,21 +243,25 @@ fn pass_params(param_list: Vec<String>) -> Vec<Instruction> {
     let split_idx = param_list.len().min(4);
     let (register_params, stack_params) = param_list.split_at(split_idx);
 
-    // pass parameter in register
-    let mut instructions: Vec<Instruction> = register_params
-        .iter()
-        .enumerate()
-        .map(|(idx, param)| {
-            let r = &PARAM_PASSING_REGS[idx];
-            Instruction::Mov(Operand::Reg(r.clone()), Operand::Pseudo(param.to_string()))
-        })
-        .collect();
+    let mut instructions: Vec<Instruction> = vec![];
 
-    instructions.extend(stack_params.iter().enumerate().map(|(idx, param)| {
-        // first param passed on stack has idx 0 and passed at Stack(16)
-        let stk = Operand::Stack((16 + 8 * idx).try_into().unwrap());
-        Instruction::Mov(stk, Operand::Pseudo(param.to_string()))
-    }));
+    // Windows x64 ABI: shadow space (32 bytes) is always reserved
+    // Move register arguments to stack slots
+    for (idx, param) in register_params.iter().enumerate() {
+        let reg = &PARAM_PASSING_REGS[idx];
+        // Windows: first arg at 16(%rbp), then 24, 32, 40
+        let offset = 16 + (idx as isize) * 8;
+        let stk = Operand::Stack(offset);
+        instructions.push(Instruction::Mov(Operand::Reg(reg.clone()), stk.clone()));
+        // Move from stack slot to pseudo for IR
+        instructions.push(Instruction::Mov(stk, Operand::Pseudo(param.to_string())));
+    }
+    // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
+    for (idx, param) in stack_params.iter().enumerate() {
+        let offset = 16 + ((register_params.len() + idx) as isize) * 8;
+        let stk = Operand::Stack(offset);
+        instructions.push(Instruction::Mov(stk, Operand::Pseudo(param.to_string())));
+    }
 
     instructions
 }

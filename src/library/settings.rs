@@ -10,7 +10,7 @@ pub enum Stage {
     Executable,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum Target {
     OsX,
     Linux,
