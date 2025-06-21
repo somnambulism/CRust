@@ -13,14 +13,14 @@ use crate::library::{
 
 const PARAM_PASSING_REGS: [Reg; 4] = [Reg::CX, Reg::DX, Reg::R8, Reg::R9];
 
-fn convert_val(val: TackyVal) -> Operand {
+fn convert_val(val: &TackyVal) -> Operand {
     match val {
-        TackyVal::Constant(i) => Operand::Imm(i),
-        TackyVal::Var(v) => Operand::Pseudo(v),
+        TackyVal::Constant(i) => Operand::Imm(*i),
+        TackyVal::Var(v) => Operand::Pseudo(v.to_string()),
     }
 }
 
-fn convert_unop(op: TackyUnaryOp) -> UnaryOperator {
+fn convert_unop(op: &TackyUnaryOp) -> UnaryOperator {
     match op {
         TackyUnaryOp::Complement => UnaryOperator::Not,
         TackyUnaryOp::Negate => UnaryOperator::Neg,
@@ -30,7 +30,7 @@ fn convert_unop(op: TackyUnaryOp) -> UnaryOperator {
     }
 }
 
-fn convert_binop(op: TackyBinaryOp) -> BinaryOperator {
+fn convert_binop(op: &TackyBinaryOp) -> BinaryOperator {
     match op {
         TackyBinaryOp::Add => BinaryOperator::Add,
         TackyBinaryOp::Subtract => BinaryOperator::Sub,
@@ -53,7 +53,7 @@ fn convert_binop(op: TackyBinaryOp) -> BinaryOperator {
     }
 }
 
-fn convert_cond_code(cond_code: TackyBinaryOp) -> CondCode {
+fn convert_cond_code(cond_code: &TackyBinaryOp) -> CondCode {
     match cond_code {
         TackyBinaryOp::Equal => CondCode::E,
         TackyBinaryOp::NotEqual => CondCode::NE,
@@ -65,7 +65,7 @@ fn convert_cond_code(cond_code: TackyBinaryOp) -> CondCode {
     }
 }
 
-fn convert_function_call(f: &str, args: Vec<TackyVal>, dst: TackyVal) -> Vec<Instruction> {
+fn convert_function_call(f: &str, args: &Vec<TackyVal>, dst: &TackyVal) -> Vec<Instruction> {
     let split_idx = args.len().min(4);
     let (reg_args, stack_args) = args.split_at(split_idx);
     // adjust stack alignment
@@ -83,13 +83,13 @@ fn convert_function_call(f: &str, args: Vec<TackyVal>, dst: TackyVal) -> Vec<Ins
     // pass args in registers
     instructions.extend(reg_args.iter().enumerate().map(|(idx, arg)| {
         let r = &PARAM_PASSING_REGS[idx];
-        let assembly_arg = convert_val(arg.clone());
+        let assembly_arg = convert_val(arg);
         Instruction::Mov(assembly_arg, Operand::Reg(r.clone()))
     }));
 
     // pass args on the stack
     for arg in stack_args.iter().rev() {
-        let assembly_arg = convert_val(arg.clone());
+        let assembly_arg = convert_val(arg);
         match assembly_arg {
             Operand::Imm(_) | Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
             _ => {
@@ -113,21 +113,21 @@ fn convert_function_call(f: &str, args: Vec<TackyVal>, dst: TackyVal) -> Vec<Ins
     instructions.push(Instruction::DeallocateStack(bytes_to_remove));
 
     // retrieve return value
-    let assembly_dst = convert_val(dst);
+    let assembly_dst = convert_val(&dst);
     instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), assembly_dst));
 
     instructions
 }
 
-fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
+fn convert_instruction(instruction: &TackyInstruction) -> Vec<Instruction> {
     match instruction {
         TackyInstruction::Copy { src, dst } => {
-            let asm_src = convert_val(src);
-            let asm_dst = convert_val(dst);
+            let asm_src = convert_val(&src);
+            let asm_dst = convert_val(&dst);
             vec![Instruction::Mov(asm_src, asm_dst)]
         }
         TackyInstruction::Return(tacky_val) => {
-            let asm_val = convert_val(tacky_val);
+            let asm_val = convert_val(&tacky_val);
             vec![
                 Instruction::Mov(asm_val, Operand::Reg(Reg::AX)),
                 Instruction::Ret,
@@ -138,8 +138,8 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
             src,
             dst,
         } => {
-            let asm_src = convert_val(src);
-            let asm_dst = convert_val(dst);
+            let asm_src = convert_val(&src);
+            let asm_dst = convert_val(&dst);
             vec![
                 Instruction::Cmp(Operand::Imm(0), asm_src),
                 Instruction::Mov(Operand::Imm(0), asm_dst.clone()),
@@ -147,9 +147,9 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
             ]
         }
         TackyInstruction::Unary { op, src, dst } => {
-            let asm_op = convert_unop(op);
-            let asm_src = convert_val(src);
-            let asm_dst = convert_val(dst);
+            let asm_op = convert_unop(&op);
+            let asm_src = convert_val(&src);
+            let asm_dst = convert_val(&dst);
             vec![
                 Instruction::Mov(asm_src, asm_dst.clone()),
                 Instruction::Unary(asm_op, asm_dst),
@@ -161,9 +161,9 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
             src2,
             dst,
         } => {
-            let asm_src1 = convert_val(src1);
-            let asm_src2 = convert_val(src2);
-            let asm_dst = convert_val(dst);
+            let asm_src1 = convert_val(&src1);
+            let asm_src2 = convert_val(&src2);
+            let asm_dst = convert_val(&dst);
             match op {
                 // Relational operator
                 TackyBinaryOp::Equal
@@ -172,7 +172,7 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                 | TackyBinaryOp::GreaterOrEqual
                 | TackyBinaryOp::LessThan
                 | TackyBinaryOp::LessOrEqual => {
-                    let cond_code = convert_cond_code(op);
+                    let cond_code = convert_cond_code(&op);
                     vec![
                         Instruction::Cmp(asm_src2, asm_src1),
                         Instruction::Mov(Operand::Imm(0), asm_dst.clone()),
@@ -181,7 +181,7 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                 }
                 // Division/modulo
                 TackyBinaryOp::Divide | TackyBinaryOp::Mod => {
-                    let result_reg = if op == TackyBinaryOp::Divide {
+                    let result_reg = if op == &TackyBinaryOp::Divide {
                         Reg::AX
                     } else {
                         Reg::DX
@@ -199,7 +199,7 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                         // Instruction::Mov(asm_src2, Operand::Reg(Reg::CX)),
                         Instruction::Mov(asm_src1, asm_dst.clone()),
                         Instruction::Binary {
-                            op: convert_binop(op),
+                            op: convert_binop(&op),
                             src: asm_src2,
                             dst: asm_dst,
                         },
@@ -207,7 +207,7 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                 }
                 // Addition/subtraction/multiplication
                 _ => {
-                    let asm_op = convert_binop(op);
+                    let asm_op = convert_binop(&op);
                     vec![
                         Instruction::Mov(asm_src1, asm_dst.clone()),
                         Instruction::Binary {
@@ -219,27 +219,27 @@ fn convert_instruction(instruction: TackyInstruction) -> Vec<Instruction> {
                 }
             }
         }
-        TackyInstruction::Jump(target) => vec![Instruction::Jmp(target)],
+        TackyInstruction::Jump(target) => vec![Instruction::Jmp(target.to_string())],
         TackyInstruction::JumpIfZero(cond, target) => {
-            let asm_cond = convert_val(cond);
+            let asm_cond = convert_val(&cond);
             vec![
                 Instruction::Cmp(Operand::Imm(0), asm_cond),
-                Instruction::JmpCC(CondCode::E, target),
+                Instruction::JmpCC(CondCode::E, target.to_string()),
             ]
         }
         TackyInstruction::JumpIfNotZero(cond, target) => {
-            let asm_cond = convert_val(cond);
+            let asm_cond = convert_val(&cond);
             vec![
                 Instruction::Cmp(Operand::Imm(0), asm_cond),
-                Instruction::JmpCC(CondCode::NE, target),
+                Instruction::JmpCC(CondCode::NE, target.to_string()),
             ]
         }
-        TackyInstruction::Label(l) => vec![Instruction::Label(l)],
-        TackyInstruction::FunCall { f, args, dst } => convert_function_call(&f, args, dst),
+        TackyInstruction::Label(l) => vec![Instruction::Label(l.to_string())],
+        TackyInstruction::FunCall { f, args, dst } => convert_function_call(&f, &args, &dst),
     }
 }
 
-fn pass_params(param_list: Vec<String>) -> Vec<Instruction> {
+fn pass_params(param_list: &Vec<String>) -> Vec<Instruction> {
     let split_idx = param_list.len().min(4);
     let (register_params, stack_params) = param_list.split_at(split_idx);
 
@@ -266,17 +266,17 @@ fn pass_params(param_list: Vec<String>) -> Vec<Instruction> {
     instructions
 }
 
-fn convert_function(function_definition: FunctionDefinition) -> AssemblyFunction {
+fn convert_function(function_definition: &FunctionDefinition) -> AssemblyFunction {
     let FunctionDefinition { name, body, params } = function_definition;
-    let mut instructions = pass_params(params);
+    let mut instructions = pass_params(&params);
     for instruction in body {
         instructions.extend(convert_instruction(instruction));
     }
 
-    AssemblyFunction { name, instructions }
+    AssemblyFunction { name: name.to_string(), instructions }
 }
 
-pub fn generate(program: Program) -> AssemblyProgram {
+pub fn generate(program: &Program) -> AssemblyProgram {
     let Program { functions: fn_defs } = program;
 
     AssemblyProgram {

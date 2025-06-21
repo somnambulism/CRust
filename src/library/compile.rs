@@ -7,7 +7,7 @@ use std::{
 use crate::library::{emit::CodeEmitter, lex::Lexer, parse::Parser, settings::current_platform};
 
 use super::semantic_analysis::label_loops::LoopsLabeller;
-use super::semantic_analysis::labels::LabelsResolver;
+use super::semantic_analysis::labels::resolve_labels;
 use super::semantic_analysis::resolve::Resolver;
 use super::semantic_analysis::typecheck::TypeChecker;
 use super::{
@@ -41,8 +41,7 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
 
     // Semantic analysis
     // 1. Label gotos
-    let mut labels_resolver = LabelsResolver::new();
-    let labelled_ast = labels_resolver.resolve(ast);
+    let labelled_ast = resolve_labels(ast);
     // 2. Resolve identifiers
     let mut variable_resolver = Resolver::new();
     let resolved_ast = variable_resolver.resolve(labelled_ast);
@@ -71,7 +70,7 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
     }
 
     // 1. Convert TACKY to assembly
-    let asm_ast = codegen::generate(tacky);
+    let asm_ast = codegen::generate(&tacky);
     if debug {
         let mut prealloc_filename = PathBuf::from(src_file);
         prealloc_filename.set_extension("prealloc.debug.s");

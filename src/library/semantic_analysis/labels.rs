@@ -236,13 +236,15 @@ impl LabelsResolver {
             ..func
         }
     }
+}
 
-    pub fn resolve(&mut self, Program(fn_defs): Program) -> Program {
-        Program(
-            fn_defs
-                .into_iter()
-                .map(|fn_def| self.resolve_function_def(fn_def))
-                .collect(),
-        )
-    }
+pub fn resolve_labels(Program(fn_defs): Program) -> Program {
+    let fn_defs = fn_defs
+        .into_iter()
+        .map(|fn_def| {
+            let mut resolver = LabelsResolver::new();
+            resolver.resolve_function_def(fn_def)
+        })
+        .collect::<Vec<_>>();
+    Program(fn_defs)
 }
