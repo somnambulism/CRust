@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    ast::{Block, BlockItem, FunctionDeclaration, Program, Statement},
+    ast::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement},
     util::unique_ids::make_label,
 };
 
@@ -228,12 +228,16 @@ impl LabelsResolver {
         Block(resolved_items)
     }
 
-    fn resolve_function_def(&mut self, func: FunctionDeclaration) -> FunctionDeclaration {
-        let resolved_body = func.body.map(|body| self.resolve_block(body));
-
-        FunctionDeclaration {
-            body: resolved_body,
-            ..func
+    fn resolve_decl(&mut self, decl: Declaration) -> Declaration {
+        match decl {
+            Declaration::FunDecl(func) => {
+                let resolved_body = func.body.map(|body| self.resolve_block(body));
+                Declaration::FunDecl(FunctionDeclaration {
+                    body: resolved_body,
+                    ..func
+                })
+            }
+            var_decl => var_decl,
         }
     }
 }
@@ -243,7 +247,7 @@ pub fn resolve_labels(Program(fn_defs): Program) -> Program {
         .into_iter()
         .map(|fn_def| {
             let mut resolver = LabelsResolver::new();
-            resolver.resolve_function_def(fn_def)
+            resolver.resolve_decl(fn_def)
         })
         .collect::<Vec<_>>();
     Program(fn_defs)

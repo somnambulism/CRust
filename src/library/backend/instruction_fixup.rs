@@ -1,5 +1,5 @@
 use crate::library::{
-    assembly::{BinaryOperator, FunctionDefinition, Instruction, Operand, Program, Reg},
+    assembly::{BinaryOperator, Instruction, Operand, Program, Reg, TopLevel},
     symbols::SymbolTable,
     util::rounding::round_away_from_zero,
 };
@@ -7,10 +7,15 @@ use crate::library::{
 fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
     match instruction {
         // Mov can't move a value from one memory address to another
-        Instruction::Mov(src @ Operand::Stack(_), dst @ Operand::Stack(_)) => vec![
-            Instruction::Mov(src, Operand::Reg(Reg::R10)),
-            Instruction::Mov(Operand::Reg(Reg::R10), dst),
-        ],
+        Instruction::Mov(
+            src @ Operand::Stack(_) | src @ Operand::Data(_),
+            dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+        ) => {
+            vec![
+                Instruction::Mov(src, Operand::Reg(Reg::R10)),
+                Instruction::Mov(Operand::Reg(Reg::R10), dst),
+            ]
+        }
         // Idiv can't operate on constants
         Instruction::Idiv(Operand::Imm(i)) => vec![
             Instruction::Mov(Operand::Imm(i), Operand::Reg(Reg::R10)),
@@ -24,8 +29,8 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
                 | op @ BinaryOperator::And
                 | op @ BinaryOperator::Or
                 | op @ BinaryOperator::Xor,
-            src: src @ Operand::Stack(_),
-            dst: dst @ Operand::Stack(_),
+            src: src @ Operand::Stack(_) | src @ Operand::Data(_),
+            dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),
         } => vec![
             Instruction::Mov(src, Operand::Reg(Reg::R10)),
             Instruction::Binary {
@@ -38,7 +43,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         Instruction::Binary {
             op: op @ BinaryOperator::Mult,
             src,
-            dst: dst @ Operand::Stack(_),
+            dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),
         } => vec![
             Instruction::Mov(dst.clone(), Operand::Reg(Reg::R11)),
             Instruction::Binary {
@@ -52,7 +57,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         Instruction::Binary {
             op: op @ BinaryOperator::Sal | op @ BinaryOperator::Sar,
             src,
-            dst: dst @ Operand::Stack(_),
+            dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),
         } => {
             // if the source is a constant, sal/sar can be done directly
             if let Operand::Imm(_) = src {
@@ -72,7 +77,10 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
             }
         }
         // Both operands of cmp can't be in memory
-        Instruction::Cmp(src @ Operand::Stack(_), dst @ Operand::Stack(_)) => vec![
+        Instruction::Cmp(
+            src @ Operand::Stack(_) | src @ Operand::Data(_),
+            dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+        ) => vec![
             Instruction::Mov(src, Operand::Reg(Reg::R10)),
             Instruction::Cmp(Operand::Reg(Reg::R10), dst),
         ],
@@ -85,27 +93,36 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
     }
 }
 
-fn fixup_function(func: FunctionDefinition, symbol_table: &SymbolTable) -> FunctionDefinition {
-    let stack_bytes = -symbol_table.get(&func.name).stack_frame_size;
-    let x = FunctionDefinition {
-        name: func.name,
-        instructions: std::iter::once(Instruction::AllocateStack(round_away_from_zero(
-            16,
-            stack_bytes,
-        ).try_into().unwrap()))
-        .chain(func.instructions.into_iter().flat_map(fixup_instruction))
-        .collect(),
-    };
-    x
+fn fixup_tl(tl: TopLevel, symbol_table: &SymbolTable) -> TopLevel {
+    match tl {
+        TopLevel::Function {
+            name,
+            global,
+            instructions,
+        } => {
+            let stack_bytes = -symbol_table.get_bytes_required(&name);
+            let x = TopLevel::Function {
+                name,
+                global,
+                instructions: std::iter::once(Instruction::AllocateStack(
+                    round_away_from_zero(16, stack_bytes).try_into().unwrap(),
+                ))
+                .chain(instructions.into_iter().flat_map(fixup_instruction))
+                .collect(),
+            };
+            x
+        }
+        TopLevel::StaticVariable { .. } => tl,
+    }
 }
 
 pub fn fixup_program(program: Program, symbol_table: &SymbolTable) -> Program {
     let fixed_functions = program
-        .function
+        .top_levels
         .into_iter()
-        .map(|fn_def| fixup_function(fn_def, symbol_table))
+        .map(|tl| fixup_tl(tl, symbol_table))
         .collect();
     Program {
-        function: fixed_functions,
+        top_levels: fixed_functions,
     }
 }

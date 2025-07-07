@@ -27,7 +27,7 @@ pub enum BinaryOperator {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TackyVal {
-    Constant(i32),
+    Constant(i64),
     Var(String),
 }
 
@@ -61,13 +61,21 @@ pub enum Instruction {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct FunctionDefinition {
-    pub name: String,
-    pub params: Vec<String>,
-    pub body: Vec<Instruction>,
+pub enum TopLevel {
+    FunctionDefinition {
+        name: String,
+        global: bool,
+        params: Vec<String>,
+        body: Vec<Instruction>,
+    },
+    StaticVariable {
+        name: String,
+        global: bool,
+        init: i64,
+    },
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Program {
-    pub functions: Vec<FunctionDefinition>,
+    pub top_levels: Vec<TopLevel>,
 }

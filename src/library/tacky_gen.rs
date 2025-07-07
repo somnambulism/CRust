@@ -1,12 +1,17 @@
 use std::iter::once;
 
+use crate::library::{
+    symbols::{Entry, IdentifierAttrs, InitialValue, SymbolTable},
+    tacky::TopLevel,
+};
+
 use super::{
     ast::{
         BinaryOperator as AstBinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration,
         Exp, ForInit, FunctionDeclaration as AstFunction, Program as AstProgram, Statement,
         SwitchCases, UnaryOperator as AstUnaryOperator, VariableDeclaration,
     },
-    tacky::{BinaryOperator, FunctionDefinition, Instruction, Program, TackyVal, UnaryOperator},
+    tacky::{BinaryOperator, Instruction, Program, TackyVal, UnaryOperator},
     util::unique_ids::{make_label, make_temporary},
 };
 
@@ -18,7 +23,7 @@ fn continue_label(label: String) -> String {
     format!("continue.{}", label)
 }
 
-fn case_label(condition: i32, switch_label: String) -> String {
+fn case_label(condition: i64, switch_label: String) -> String {
     format!("switch.{}.case.{}", switch_label, condition)
 }
 
@@ -370,6 +375,10 @@ fn emit_tacky_for_block_item(item: BlockItem) -> Vec<Instruction> {
 
 fn emit_local_declaration(d: Declaration) -> Vec<Instruction> {
     match d {
+        Declaration::VarDecl(VariableDeclaration {
+            storage_class: Some(_),
+            ..
+        }) => vec![],
         Declaration::VarDecl(vd) => emit_var_declaration(vd),
         Declaration::FunDecl(_) => vec![],
     }
@@ -380,6 +389,7 @@ fn emit_var_declaration(d: VariableDeclaration) -> Vec<Instruction> {
         VariableDeclaration {
             name,
             init: Some(e),
+            ..
         } => {
             // treat declaration with initializer like an assignment expression
             let (eval_assignment, _assignment_result) =
@@ -389,6 +399,7 @@ fn emit_var_declaration(d: VariableDeclaration) -> Vec<Instruction> {
         VariableDeclaration {
             name: _,
             init: None,
+            ..
         } => {
             // don't generate instructions for declaration without initializer
             vec![]
@@ -537,34 +548,63 @@ fn emit_tacky_for_switch(
     instructions
 }
 
-fn emit_function_declaration(
-    AstFunction { name, params, body }: AstFunction,
-) -> Option<FunctionDefinition> {
-    match body {
-        Some(Block(block_items)) => {
+fn emit_fun_declaration(fun_decl: Declaration, symbols: &SymbolTable) -> Option<TopLevel> {
+    match fun_decl {
+        Declaration::FunDecl(AstFunction {
+            name,
+            params,
+            body: Some(block_items),
+            ..
+        }) => {
+            let global = symbols.is_global(name.as_str());
             let mut body_instructions: Vec<Instruction> = block_items
+                .0
                 .into_iter()
                 .flat_map(emit_tacky_for_block_item)
                 .collect();
             let extra_return = Instruction::Return(TackyVal::Constant(0));
             body_instructions.push(extra_return);
-            Some(FunctionDefinition {
+            Some(TopLevel::FunctionDefinition {
                 name,
+                global,
                 params,
                 body: body_instructions,
             })
         }
-        None => None,
+        _ => None,
     }
 }
 
-pub fn generate(ast: AstProgram) -> Program {
+fn convert_symbols_to_tacky(all_symbols: Vec<(String, &Entry)>) -> Vec<TopLevel> {
+    all_symbols
+        .iter()
+        .filter_map(|(name, entry)| match &entry.attrs {
+            IdentifierAttrs::StaticAttr { init, global } => match init {
+                InitialValue::Initial(i) => Some(TopLevel::StaticVariable {
+                    name: name.clone(),
+                    global: *global,
+                    init: i.clone(),
+                }),
+                InitialValue::Tentative => Some(TopLevel::StaticVariable {
+                    name: name.clone(),
+                    global: *global,
+                    init: 0,
+                }),
+                InitialValue::NoInitializer => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn generate(ast: AstProgram, symbols: &SymbolTable) -> Program {
     let AstProgram(fn_defs) = ast;
-    let tacky_fn_defs = fn_defs
+    let tacky_fn_defs: Vec<TopLevel> = fn_defs
         .into_iter()
-        .filter_map(emit_function_declaration)
+        .filter_map(|fun_decl| emit_fun_declaration(fun_decl, symbols))
         .collect();
+    let tacky_var_defs = convert_symbols_to_tacky(symbols.bindings());
     Program {
-        functions: tacky_fn_defs,
+        top_levels: tacky_fn_defs.into_iter().chain(tacky_var_defs).collect(),
     }
 }

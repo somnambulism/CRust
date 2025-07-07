@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::library::{
-    ast::{Block, BlockItem, FunctionDeclaration, Program, Statement, SwitchCases},
+    ast::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement, SwitchCases},
     util::unique_ids::make_label,
 };
 
@@ -194,18 +194,21 @@ impl LoopsLabeller {
         )
     }
 
-    fn label_function_def(&mut self, func: FunctionDeclaration) -> FunctionDeclaration {
-        FunctionDeclaration {
-            body: func.body.map(|body| self.label_block(body)),
-            ..func
+    fn label_decl(&mut self, decl: Declaration) -> Declaration {
+        match decl {
+            Declaration::FunDecl(func) => Declaration::FunDecl(FunctionDeclaration {
+                body: func.body.map(|body| self.label_block(body)),
+                ..func
+            }),
+            var_decl => var_decl,
         }
     }
 
-    pub fn label_loops(&mut self, Program(fn_defs): Program) -> Program {
+    pub fn label_loops(&mut self, Program(decls): Program) -> Program {
         Program(
-            fn_defs
+            decls
                 .into_iter()
-                .map(|fn_def| self.label_function_def(fn_def))
+                .map(|decl| self.label_decl(decl))
                 .collect(),
         )
     }

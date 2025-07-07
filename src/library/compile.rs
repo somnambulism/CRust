@@ -57,7 +57,7 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
     }
 
     // Convert the AST to TACKY
-    let tacky = tacky_gen::generate(validated_ast);
+    let tacky = tacky_gen::generate(validated_ast, &typeckecher.symbol_table);
     if debug {
         let mut tacky_filename = PathBuf::from(src_file);
         tacky_filename.set_extension("debug.tacky");

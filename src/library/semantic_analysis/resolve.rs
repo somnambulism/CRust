@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::library::{
     ast::{
         Block, BlockItem, Declaration, Exp, ForInit, FunctionDeclaration, Program, Statement,
-        VariableDeclaration,
+        StorageClass, VariableDeclaration,
     },
     util::unique_ids::make_named_temporary,
 };
@@ -123,43 +123,61 @@ impl Resolver {
         exp.map(|e| self.resolve_exp(&e))
     }
 
-    fn resolve_local_ver_helper(&mut self, name: &str) -> String {
+    fn resolve_local_var_helper(
+        &mut self,
+        name: &str,
+        storage_class: &Option<StorageClass>,
+    ) -> String {
         match self.id_map.get(name) {
             Some(VarEntry {
                 from_current_scope: true,
+                has_linkage,
                 ..
             }) => {
-                // variable is present in the map and was declared in the current block
-                panic!("Duplicate variable declaration");
+                if !(*has_linkage && storage_class == &Some(StorageClass::Extern)) {
+                    // variable is present in the map and was declared in the current block
+                    panic!("Duplicate variable declaration");
+                }
             }
-            _ => {
-                // variable isn't in the map, or was defined in an outer scope;
-                // generate a unique name and add it to the map
-                let unique_name = make_named_temporary(name);
-                self.id_map.insert(
-                    name.to_string(),
-                    VarEntry {
-                        unique_name: unique_name.clone(),
-                        from_current_scope: true,
-                        has_linkage: false,
-                    },
-                );
-                unique_name
-            }
+            _ => (),
         }
+        let entry = if storage_class == &Some(StorageClass::Extern) {
+            VarEntry {
+                unique_name: name.to_string(),
+                from_current_scope: true,
+                has_linkage: true,
+            }
+        } else {
+            // variable isn't in the map, or was defined in an outer scope;
+            // generate a unique name and add it to the map
+            let unique_name = make_named_temporary(name);
+            VarEntry {
+                unique_name: unique_name.clone(),
+                from_current_scope: true,
+                has_linkage: false,
+            }
+        };
+
+        self.id_map.insert(name.to_string(), entry.clone());
+        entry.unique_name
     }
 
     fn resolve_local_var_declaration(
         &mut self,
-        VariableDeclaration { name, init }: VariableDeclaration,
+        VariableDeclaration {
+            name,
+            init,
+            storage_class,
+        }: VariableDeclaration,
     ) -> VariableDeclaration {
-        let unique_name = self.resolve_local_ver_helper(&name);
+        let unique_name = self.resolve_local_var_helper(&name, &storage_class);
 
         let resolved_init = init.map(|init| self.resolve_exp(&init));
 
         VariableDeclaration {
             name: unique_name,
             init: resolved_init,
+            storage_class,
         }
     }
 
@@ -301,6 +319,12 @@ impl Resolver {
             Declaration::FunDecl(FunctionDeclaration { body: Some(_), .. }) => {
                 panic!("nested function declarations are not allowed")
             }
+            Declaration::FunDecl(FunctionDeclaration {
+                storage_class: Some(StorageClass::Static),
+                ..
+            }) => {
+                panic!("static keyword not allowed on local function declarations")
+            }
             Declaration::FunDecl(fd) => {
                 let resolved_fd = self.resolve_function_declaration(fd);
                 Declaration::FunDecl(resolved_fd)
@@ -311,7 +335,7 @@ impl Resolver {
     fn resolve_params(&mut self, params: &Vec<String>) -> Vec<String> {
         params
             .iter()
-            .map(|param| self.resolve_local_ver_helper(&param))
+            .map(|param| self.resolve_local_var_helper(&param, &None))
             .collect()
     }
 
@@ -343,11 +367,40 @@ impl Resolver {
         }
     }
 
-    pub fn resolve(&mut self, Program(fn_decls): Program) -> Program {
+    fn resolve_file_scope_variable_declaration(
+        &mut self,
+        vd: VariableDeclaration,
+    ) -> VariableDeclaration {
+        let name = vd.name.clone();
+        self.id_map.insert(
+            name.clone(),
+            VarEntry {
+                unique_name: name,
+                from_current_scope: true,
+                has_linkage: true,
+            },
+        );
+        vd
+    }
+
+    fn resolve_global_declaration(&mut self, d: Declaration) -> Declaration {
+        match d {
+            Declaration::FunDecl(fd) => {
+                let fd = self.resolve_function_declaration(fd);
+                Declaration::FunDecl(fd)
+            }
+            Declaration::VarDecl(vd) => {
+                let resolved_vd = self.resolve_file_scope_variable_declaration(vd);
+                Declaration::VarDecl(resolved_vd)
+            }
+        }
+    }
+
+    pub fn resolve(&mut self, Program(decls): Program) -> Program {
         Program(
-            fn_decls
+            decls
                 .into_iter()
-                .map(|fn_decl| self.resolve_function_declaration(fn_decl))
+                .map(|decl| self.resolve_global_declaration(decl))
                 .collect(),
         )
     }

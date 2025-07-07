@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use crate::library::{ast::StorageClass, types::Type};
+
 use super::{
     ast::{
         BinaryOperator, Block, BlockItem, CompoundAssignOperator, Declaration, Exp, ForInit,
@@ -13,7 +15,7 @@ pub struct Parser {
     tokens: TokenStream,
 }
 
-fn get_precedence(token: &Token) -> Option<i32> {
+fn get_precedence(token: &Token) -> Option<i64> {
     match token {
         Token::Star | Token::Slash | Token::Percent => Some(50),
         Token::Plus | Token::Hyphen | Token::DoublePlus | Token::DoubleHyphen => Some(45),
@@ -43,6 +45,11 @@ fn get_precedence(token: &Token) -> Option<i32> {
     }
 }
 
+// Helper function to check whether a token is a specifier
+fn is_specifier(token: &Token) -> bool {
+    matches!(token, Token::KWStatic | Token::KWExtern | Token::KWInt)
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
@@ -62,6 +69,70 @@ impl Parser {
         match self.tokens.take_token() {
             Ok(Token::Identifier(x)) => Ok(x),
             other => Err(format!("Expected identifier, found {:?}", other.unwrap())),
+        }
+    }
+
+    // Specifiers
+
+    // <specifier> ::= "int" | "static" | "extern"
+    fn parse_specifier(&mut self) -> Result<Token, String> {
+        let spec = self.tokens.take_token()?;
+        if is_specifier(&spec) {
+            Ok(spec)
+        } else {
+            Err(format!(
+                "Expected a type or storage-class specifier, found {:?}",
+                spec
+            ))
+        }
+    }
+
+    // Helper to consume a list of specifiers from start of the token stream:
+    // { <specifier> }+
+    fn parse_specifier_list(&mut self) -> Result<Vec<Token>, String> {
+        let spec = self.parse_specifier()?;
+        let mut specifiers = vec![spec];
+        while let Ok(token) = self.tokens.peek() {
+            if is_specifier(token) {
+                specifiers.push(self.parse_specifier()?);
+            } else {
+                break;
+            }
+        }
+        Ok(specifiers)
+    }
+
+    // Convert a single token to a storage class
+    fn parse_storage_class(&mut self, token: &Token) -> Result<StorageClass, String> {
+        match token {
+            Token::KWExtern => Ok(StorageClass::Extern),
+            Token::KWStatic => Ok(StorageClass::Static),
+            other => Err(format!(
+                "Expected a storage class specifier, found {:?}",
+                other
+            )),
+        }
+    }
+
+    // Convert list of specifiers to type and storage class
+    fn parse_type_and_storage_class(
+        &mut self,
+        specifier_list: &Vec<Token>,
+    ) -> Result<(Type, Option<StorageClass>), String> {
+        let (types, storage_class): (Vec<_>, Vec<_>) = specifier_list
+            .into_iter()
+            .partition(|tok| **tok == Token::KWInt);
+        if types.len() != 1 {
+            return Err("Invalid type specifier".to_string());
+        } else {
+            let storage_class = match storage_class.as_slice() {
+                [] => None,
+                [sc] => Some(self.parse_storage_class(sc)?),
+                _ => {
+                    return Err("Invalid storage class".to_string());
+                }
+            };
+            Ok((Type::Int, storage_class))
         }
     }
 
@@ -118,7 +189,7 @@ impl Parser {
         }
     }
 
-    fn parse_compound_assgin_op(&mut self) -> Result<CompoundAssignOperator, String> {
+    fn parse_compound_assign_op(&mut self) -> Result<CompoundAssignOperator, String> {
         match self.tokens.take_token() {
             Ok(Token::PlusEqual) => Ok(CompoundAssignOperator::PlusEqual),
             Ok(Token::MinusEqual) => Ok(CompoundAssignOperator::MinusEqual),
@@ -237,7 +308,7 @@ impl Parser {
         Ok(args)
     }
 
-    fn parse_exp(&mut self, min_prec: i32) -> Result<Exp, String> {
+    fn parse_exp(&mut self, min_prec: i64) -> Result<Exp, String> {
         let mut left = self.parse_factor()?;
         let mut next_token = self.tokens.peek()?;
 
@@ -262,7 +333,7 @@ impl Parser {
                 | Token::CaretEqual
                 | Token::LeftShiftEqual
                 | Token::RightShiftEqual => {
-                    let operator = self.parse_compound_assgin_op()?;
+                    let operator = self.parse_compound_assign_op()?;
                     let right = self.parse_exp(prec)?;
                     left = Exp::CompoundAssign(operator, Box::new(left), Box::new(right));
                 }
@@ -301,35 +372,6 @@ impl Parser {
 
     // Declarations
 
-    // <variable-declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
-    fn parse_variable_declaration(&mut self) -> Result<VariableDeclaration, String> {
-        self.expect(Token::KWInt)?;
-        let var_name = self.parse_id()?;
-
-        let init = match self.tokens.take_token()? {
-            // No initializer
-            Token::Semicolon => None,
-            // With initializer
-            Token::EqualSign => {
-                let init_exp = self.parse_exp(0)?;
-                self.expect(Token::Semicolon)?;
-                Some(init_exp)
-            }
-            // Unexpected token
-            other => {
-                return Err(format!(
-                    "Expected an initializer or semicolon, found {:?}",
-                    other
-                ));
-            }
-        };
-
-        Ok(VariableDeclaration {
-            name: var_name,
-            init,
-        })
-    }
-
     // <param-list> ::= "void" | "int" <identifier> { "," "int" <identifier> }
     fn parse_param_list(&mut self) -> Result<Vec<String>, String> {
         if self.tokens.peek()? == &Token::KWVoid {
@@ -355,33 +397,47 @@ impl Parser {
         }
     }
 
-    // <function-declaration> ::= "int" <identifier> "(" <param-list ")" ( <block> | ";" )
-    fn parse_function_declaration(&mut self) -> Result<FunctionDeclaration, String> {
-        self.expect(Token::KWInt)?;
-        let fun_name = self.parse_id()?;
-        self.expect(Token::OpenParen)?;
-        let params = self.parse_param_list()?;
-        self.expect(Token::CloseParen)?;
-        let body = match self.tokens.peek()? {
-            Token::Semicolon => {
-                self.tokens.take_token()?;
-                None
-            }
-            _ => Some(self.parse_block()?),
-        };
-        Ok(FunctionDeclaration {
-            name: fun_name,
-            params,
-            body,
-        })
-    }
-
+    // <function-declaration> ::= { <specifier> }+ <identifier> "(" <param-list ")" ( <block> | ";" )
+    // <variable-declaration> ::= { <specifier> }+ <identifier> [ "=" <exp> ] ";"
+    // Use a common function to parse both symbols
     fn parse_declaration(&mut self) -> Result<Declaration, String> {
-        match self.tokens.npeek(3) {
-            [Token::KWInt, Token::Identifier(_), Token::OpenParen] => {
-                Ok(Declaration::FunDecl(self.parse_function_declaration()?))
+        let specifiers = self.parse_specifier_list()?;
+        let (_typ, storage_class) = self.parse_type_and_storage_class(&specifiers)?;
+        let name = self.parse_id()?;
+        match self.tokens.peek()? {
+            // It's a function declaration
+            Token::OpenParen => {
+                self.tokens.take_token()?;
+                let params = self.parse_param_list()?;
+                self.expect(Token::CloseParen)?;
+                let body = if let Ok(Token::Semicolon) = self.tokens.peek() {
+                    self.tokens.take_token()?;
+                    None
+                } else {
+                    Some(self.parse_block()?)
+                };
+                Ok(Declaration::FunDecl(FunctionDeclaration {
+                    name,
+                    params,
+                    body,
+                    storage_class,
+                }))
             }
-            _ => Ok(Declaration::VarDecl(self.parse_variable_declaration()?)),
+            // It's a variable
+            tok => {
+                let init = if tok == &Token::EqualSign {
+                    self.tokens.take_token()?;
+                    Some(self.parse_exp(0)?)
+                } else {
+                    None
+                };
+                self.expect(Token::Semicolon)?;
+                Ok(Declaration::VarDecl(VariableDeclaration {
+                    name,
+                    init,
+                    storage_class,
+                }))
+            }
         }
     }
 
@@ -389,8 +445,13 @@ impl Parser {
 
     // <for-init> ::= <variable-declaration> | [ <exp> ] ";"
     fn parse_for_init(&mut self) -> Result<ForInit, String> {
-        if self.tokens.peek()? == &Token::KWInt {
-            Ok(ForInit::InitDecl(self.parse_variable_declaration()?))
+        if is_specifier(self.tokens.peek()?) {
+            match self.parse_declaration()? {
+                Declaration::VarDecl(vd) => Ok(ForInit::InitDecl(vd)),
+                _ => {
+                    return Err("Found a function declaration in a for loop header".to_string());
+                }
+            }
         } else {
             let opt_e = self.parse_optional_exp(Token::Semicolon)?;
             Ok(ForInit::InitExp(opt_e))
@@ -589,7 +650,7 @@ impl Parser {
 
     // <block_item> ::= <statement> | <declaration>
     fn parse_block_item(&mut self) -> Result<BlockItem, String> {
-        if self.tokens.peek() == Ok(&Token::KWInt) {
+        if is_specifier(self.tokens.peek()?) {
             Ok(BlockItem::D(self.parse_declaration()?))
         } else {
             Ok(BlockItem::S(self.parse_statement()?))
@@ -608,17 +669,13 @@ impl Parser {
     }
 
     // Top level
+
+    // <program> ::= { <declaration> }*
     pub fn parse_program(&mut self) -> Result<Program, String> {
-        // let fun_def = self.parse_function_definition()?;
-        // if self.tokens.is_empty() {
-        //     Ok(Program { function: fun_def })
-        // } else {
-        //     Err("Unexpected tokens after function definition".to_string())
-        // }
         let mut fun_decls = vec![];
 
         while !self.tokens.is_empty() {
-            let next_decl = self.parse_function_declaration()?;
+            let next_decl = self.parse_declaration()?;
             fun_decls.push(next_decl);
         }
 

@@ -2,12 +2,12 @@ use std::vec;
 
 use crate::library::{
     assembly::{
-        BinaryOperator, CondCode, FunctionDefinition as AssemblyFunction, Instruction, Operand,
-        Program as AssemblyProgram, Reg, UnaryOperator,
+        BinaryOperator, CondCode, Instruction, Operand, Program as AssemblyProgram, Reg,
+        TopLevel as AssemblyTopLevel, UnaryOperator,
     },
     tacky::{
-        BinaryOperator as TackyBinaryOp, FunctionDefinition, Instruction as TackyInstruction,
-        Program, TackyVal, UnaryOperator as TackyUnaryOp,
+        BinaryOperator as TackyBinaryOp, Instruction as TackyInstruction, Program, TackyVal,
+        TopLevel, UnaryOperator as TackyUnaryOp,
     },
 };
 
@@ -266,20 +266,37 @@ fn pass_params(param_list: &Vec<String>) -> Vec<Instruction> {
     instructions
 }
 
-fn convert_function(function_definition: &FunctionDefinition) -> AssemblyFunction {
-    let FunctionDefinition { name, body, params } = function_definition;
-    let mut instructions = pass_params(&params);
-    for instruction in body {
-        instructions.extend(convert_instruction(instruction));
-    }
+fn convert_top_level(top_level: &TopLevel) -> AssemblyTopLevel {
+    match top_level {
+        TopLevel::FunctionDefinition {
+            name,
+            global,
+            params,
+            body,
+        } => {
+            let mut instructions = pass_params(&params);
+            for instruction in body {
+                instructions.extend(convert_instruction(instruction));
+            }
 
-    AssemblyFunction { name: name.to_string(), instructions }
+            AssemblyTopLevel::Function {
+                name: name.to_string(),
+                global: *global,
+                instructions,
+            }
+        }
+        TopLevel::StaticVariable { name, global, init } => AssemblyTopLevel::StaticVariable {
+            name: name.to_string(),
+            global: *global,
+            init: *init,
+        },
+    }
 }
 
 pub fn generate(program: &Program) -> AssemblyProgram {
-    let Program { functions: fn_defs } = program;
+    let Program { top_levels } = program;
 
     AssemblyProgram {
-        function: fn_defs.into_iter().map(convert_function).collect(),
+        top_levels: top_levels.into_iter().map(convert_top_level).collect(),
     }
 }

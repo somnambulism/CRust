@@ -93,3 +93,4 @@ the source code into C...
 - Loops (`for`, `while`, `do-while`)
    - Extra: `switch` statements
 - Functions
+- Support for `static` and `extern` keywords.

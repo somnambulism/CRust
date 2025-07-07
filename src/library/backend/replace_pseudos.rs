@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    assembly::{FunctionDefinition, Instruction, Operand, Program},
+    assembly::{Instruction, Operand, Program, TopLevel},
     symbols::SymbolTable,
 };
 
@@ -19,57 +19,68 @@ impl ReplacementState {
         }
     }
 
-    fn replace_operand(&mut self, operand: Operand) -> Operand {
+    fn replace_operand(&mut self, operand: &Operand, symbols: &SymbolTable) -> Operand {
         match operand {
-            Operand::Pseudo(name) => {
-                if let Some(&offset) = self.offset_map.get(&name) {
-                    Operand::Stack(offset)
+            Operand::Pseudo(s) => {
+                if symbols.is_static(&s) {
+                    return Operand::Data(s.to_string());
                 } else {
-                    let new_offset = self.current_offset - 4;
-                    self.offset_map.insert(name, new_offset);
-                    self.current_offset = new_offset;
-                    Operand::Stack(new_offset)
+                    // We've already assigned this operand a stack slot
+                    if let Some(&offset) = self.offset_map.get(s) {
+                        Operand::Stack(offset)
+                    // We haven't already assigned it a stack slot;
+                    // assign it and update state
+                    } else {
+                        let new_offset = self.current_offset - 4;
+                        self.offset_map.insert(s.to_string(), new_offset);
+                        self.current_offset = new_offset;
+                        Operand::Stack(new_offset)
+                    }
                 }
             }
-            other => other,
+            other => other.clone(),
         }
     }
 
-    fn replace_pseudos_in_instruction(&mut self, instruction: Instruction) -> Instruction {
+    fn replace_pseudos_in_instruction(
+        &mut self,
+        instruction: &Instruction,
+        symbols: &SymbolTable,
+    ) -> Instruction {
         match instruction {
             Instruction::Mov(src, dst) => {
-                let new_src = self.replace_operand(src);
-                let new_dst = self.replace_operand(dst);
+                let new_src = self.replace_operand(src, symbols);
+                let new_dst = self.replace_operand(dst, symbols);
                 Instruction::Mov(new_src, new_dst)
             }
             Instruction::Unary(op, dst) => {
-                let new_dst = self.replace_operand(dst);
-                Instruction::Unary(op, new_dst)
+                let new_dst = self.replace_operand(dst, symbols);
+                Instruction::Unary(op.clone(), new_dst)
             }
             Instruction::Binary { op, src, dst } => {
-                let new_src = self.replace_operand(src);
-                let new_dst = self.replace_operand(dst);
+                let new_src = self.replace_operand(src, symbols);
+                let new_dst = self.replace_operand(dst, symbols);
                 Instruction::Binary {
-                    op,
+                    op: op.clone(),
                     src: new_src,
                     dst: new_dst,
                 }
             }
             Instruction::Cmp(op1, op2) => {
-                let new_op1 = self.replace_operand(op1);
-                let new_op2 = self.replace_operand(op2);
+                let new_op1 = self.replace_operand(op1, symbols);
+                let new_op2 = self.replace_operand(op2, symbols);
                 Instruction::Cmp(new_op1, new_op2)
             }
             Instruction::Idiv(op) => {
-                let new_op = self.replace_operand(op);
+                let new_op = self.replace_operand(op, symbols);
                 Instruction::Idiv(new_op)
             }
             Instruction::SetCC(code, op) => {
-                let new_op = self.replace_operand(op);
-                Instruction::SetCC(code, new_op)
+                let new_op = self.replace_operand(op, symbols);
+                Instruction::SetCC(code.clone(), new_op)
             }
             Instruction::Push(op) => {
-                let new_op = self.replace_operand(op);
+                let new_op = self.replace_operand(op, symbols);
                 Instruction::Push(new_op)
             }
             Instruction::Ret
@@ -79,35 +90,41 @@ impl ReplacementState {
             | Instruction::Jmp(_)
             | Instruction::DeallocateStack(_)
             | Instruction::Call(_)
-            | Instruction::AllocateStack(_) => instruction,
+            | Instruction::AllocateStack(_) => instruction.clone(),
         }
     }
 }
 
-fn replace_pseudos_in_function(
-    func: FunctionDefinition,
-    symbol_table: &mut SymbolTable,
-) -> FunctionDefinition {
-    let mut state = ReplacementState::new();
-    let fixed_instructions = func
-        .instructions
-        .into_iter()
-        .map(|instr| state.replace_pseudos_in_instruction(instr))
-        .collect();
-    symbol_table.set_bytes_required(&func.name, state.current_offset);
-    FunctionDefinition {
-        name: func.name,
-        instructions: fixed_instructions,
+fn replace_pseudos_in_tl(top_level: TopLevel, symbol_table: &mut SymbolTable) -> TopLevel {
+    match top_level {
+        TopLevel::Function {
+            name,
+            global,
+            instructions,
+        } => {
+            let mut state = ReplacementState::new();
+            let fixed_instructions = instructions
+                .into_iter()
+                .map(|instr| state.replace_pseudos_in_instruction(&instr, &symbol_table))
+                .collect();
+            symbol_table.set_bytes_required(&name, state.current_offset);
+            TopLevel::Function {
+                name: name.to_string(),
+                global,
+                instructions: fixed_instructions,
+            }
+        }
+        TopLevel::StaticVariable { .. } => top_level,
     }
 }
 
 pub fn replace_pseudos(program: Program, symbol_table: &mut SymbolTable) -> Program {
     let fixed_defs = program
-        .function
+        .top_levels
         .into_iter()
-        .map(|fn_def| replace_pseudos_in_function(fn_def, symbol_table))
+        .map(|tl| replace_pseudos_in_tl(tl, symbol_table))
         .collect::<Vec<_>>();
     Program {
-        function: fixed_defs,
+        top_levels: fixed_defs,
     }
 }

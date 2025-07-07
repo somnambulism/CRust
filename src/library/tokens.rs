@@ -2,7 +2,7 @@
 pub enum Token {
     // Tokens with contents
     Identifier(String),
-    Constant(i32),
+    Constant(i64),
 
     // Keywords
     KWInt,
@@ -19,6 +19,8 @@ pub enum Token {
     KWSwitch,
     KWCase,
     KWDefault,
+    KWStatic,
+    KWExtern,
 
     // Punctuation
     OpenParen,

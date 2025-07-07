@@ -244,6 +244,8 @@ impl Lexer {
             "for" => Token::KWFor,
             "break" => Token::KWBreak,
             "continue" => Token::KWContinue,
+            "static" => Token::KWStatic,
+            "extern" => Token::KWExtern,
             "goto" => Token::KWGoto,
             "switch" => Token::KWSwitch,
             "case" => Token::KWCase,
@@ -253,7 +255,7 @@ impl Lexer {
     }
 
     fn convert_int(s: &str) -> Token {
-        Token::Constant(s.parse::<i32>().unwrap())
+        Token::Constant(s.parse::<i64>().unwrap())
     }
 }
 

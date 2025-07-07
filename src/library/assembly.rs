@@ -11,10 +11,11 @@ pub enum Reg {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operand {
-    Imm(i32),
+    Imm(i64),
     Reg(Reg),
     Pseudo(String),
     Stack(isize),
+    Data(String),
 }
 
 #[derive(Clone, Debug)]
@@ -69,12 +70,20 @@ pub enum Instruction {
 }
 
 #[derive(Debug)]
-pub struct FunctionDefinition {
-    pub name: String,
-    pub instructions: Vec<Instruction>,
+pub enum TopLevel {
+    Function {
+        name: String,
+        global: bool,
+        instructions: Vec<Instruction>,
+    },
+    StaticVariable {
+        name: String,
+        global: bool,
+        init: i64,
+    },
 }
 
 #[derive(Debug)]
 pub struct Program {
-    pub function: Vec<FunctionDefinition>,
+    pub top_levels: Vec<TopLevel>,
 }

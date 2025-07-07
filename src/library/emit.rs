@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Result, Write};
 
-use super::assembly::{BinaryOperator, CondCode, FunctionDefinition, Program, Reg, UnaryOperator};
+use super::assembly::{BinaryOperator, CondCode, Program, Reg, TopLevel, UnaryOperator};
 use super::symbols::SymbolTable;
 use super::{
     assembly::{Instruction, Operand},
@@ -24,6 +24,42 @@ impl CodeEmitter {
         })
     }
 
+    fn align_directive(&self) -> String {
+        match self.platform {
+            Target::OsX => ".balign".to_string(),
+            Target::Linux => ".align".to_string(),
+            Target::Windows => ".align".to_string(),
+        }
+    }
+
+    fn show_label(&self, name: &str) -> String {
+        match self.platform {
+            Target::OsX => format!("_{}", name),
+            _ => name.to_string(),
+        }
+    }
+
+    fn show_local_label(&self, name: &str) -> String {
+        match self.platform {
+            Target::OsX => format!("L{}", name),
+            _ => format!(".L{}", name),
+        }
+    }
+
+    fn show_fun_name(&self, f: &str) -> String {
+        match self.platform {
+            Target::OsX => format!("_{}", f),
+            Target::Linux => {
+                if self.symbols.is_defined(f) {
+                    f.to_string()
+                } else {
+                    format!("{}@PLT", f)
+                }
+            }
+            Target::Windows => f.to_string(),
+        }
+    }
+
     fn show_reg(&self, reg: &Reg) -> String {
         match reg {
             Reg::AX => "%eax".to_string(),
@@ -41,8 +77,10 @@ impl CodeEmitter {
             Operand::Reg(r) => self.show_reg(r),
             Operand::Imm(i) => format!("${}", i),
             Operand::Stack(i) => format!("{}(%rbp)", i),
+            Operand::Data(name) => format!("{}(%rip)", self.show_label(name)),
             // printing out pseudoregister is only for debugging
             Operand::Pseudo(name) => format!("%{}", name),
+            _ => todo!("Unsupported operand type: {:?}", operand),
         }
     }
 
@@ -81,34 +119,6 @@ impl CodeEmitter {
         match operand {
             Operand::Reg(r) => self.show_quarword_reg(r),
             other => self.show_operand(other),
-        }
-    }
-
-    fn show_label(&self, name: &str) -> String {
-        match self.platform {
-            Target::OsX => format!("_{}", name),
-            _ => name.to_string(),
-        }
-    }
-
-    fn show_fun_name(&self, f: &str) -> String {
-        match self.platform {
-            Target::OsX => format!("_{}", f),
-            Target::Linux => {
-                if self.symbols.is_defined(f) {
-                    f.to_string()
-                } else {
-                    format!("{}@PLT", f)
-                }
-            }
-            Target::Windows => f.to_string(),
-        }
-    }
-
-    fn show_local_label(&self, name: &str) -> String {
-        match self.platform {
-            Target::OsX => format!("L{}", name),
-            _ => format!(".L{}", name),
         }
     }
 
@@ -211,16 +221,59 @@ impl CodeEmitter {
         }
     }
 
-    fn emit_function(&mut self, function: &FunctionDefinition) -> Result<()> {
-        let label = self.show_label(&function.name);
-        writeln!(self.file, "\t.globl {}", label)?;
-        writeln!(self.file, "{}:", label)?;
-        writeln!(self.file, "\tpushq %rbp")?;
-        writeln!(self.file, "\tmovq %rsp, %rbp")?;
-        for instr in &function.instructions {
-            self.emit_instruction(instr)?;
+    fn emit_global_directive(&mut self, global: bool, label: &str) -> Result<()> {
+        if global {
+            writeln!(self.file, "\t.globl {}", label)
+        } else {
+            Ok(())
         }
-        Ok(())
+    }
+
+    fn emit_tl(&mut self, tl: &TopLevel) -> Result<()> {
+        match tl {
+            TopLevel::Function {
+                name,
+                global,
+                instructions,
+            } => {
+                let label = self.show_label(&name);
+
+                self.emit_global_directive(*global, &label)?;
+                writeln!(self.file, "\t.text")?;
+                writeln!(self.file, "{}:", label)?;
+                writeln!(self.file, "\tpushq %rbp")?;
+                writeln!(self.file, "\tmovq %rsp, %rbp")?;
+                for instr in instructions {
+                    self.emit_instruction(&instr)?;
+                }
+                writeln!(self.file)?;
+                Ok(())
+            }
+            TopLevel::StaticVariable {
+                name,
+                global,
+                init: 0,
+            } => {
+                let label = self.show_label(&name);
+                self.emit_global_directive(*global, &label)?;
+                writeln!(self.file, "\t.bss")?;
+                writeln!(self.file, "\t{} 4", self.align_directive())?;
+                writeln!(self.file, "{}:", label)?;
+                writeln!(self.file, "\t.zero 4")?;
+                writeln!(self.file)?;
+                Ok(())
+            }
+            TopLevel::StaticVariable { name, global, init } => {
+                let label = self.show_label(&name);
+                self.emit_global_directive(*global, &label)?;
+                writeln!(self.file, "\t.data")?;
+                writeln!(self.file, "\t{} 4", self.align_directive())?;
+                writeln!(self.file, "{}:", label)?;
+                writeln!(self.file, "\t.long {}", init)?;
+                writeln!(self.file)?;
+                Ok(())
+            }
+        }
     }
 
     fn emit_stack_note(&mut self) -> Result<()> {
@@ -231,8 +284,8 @@ impl CodeEmitter {
     }
 
     pub fn emit(&mut self, program: &Program) -> Result<()> {
-        for function in &program.function {
-            self.emit_function(&function)?;
+        for tl in &program.top_levels {
+            self.emit_tl(&tl)?;
         }
         self.emit_stack_note()?;
         Ok(())

@@ -45,7 +45,7 @@ pub enum CompoundAssignOperator {
 
 #[derive(Debug, PartialEq)]
 pub enum Exp {
-    Constant(i32),
+    Constant(i64),
     Var(String),
     Unary(UnaryOperator, Box<Exp>),
     Binary(BinaryOperator, Box<Exp>, Box<Exp>),
@@ -67,9 +67,16 @@ pub enum Exp {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum StorageClass {
+    Static,
+    Extern,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct VariableDeclaration {
     pub name: String,
     pub init: Option<Exp>,
+    pub storage_class: Option<StorageClass>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -78,7 +85,7 @@ pub enum ForInit {
     InitExp(Option<Exp>),
 }
 
-pub type SwitchCases = HashSet<Option<i32>>;
+pub type SwitchCases = HashSet<Option<i64>>;
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
@@ -116,7 +123,7 @@ pub enum Statement {
         id: String,
     },
     Case {
-        condition: i32,
+        condition: i64,
         body: Box<Statement>,
         switch_label: String,
     },
@@ -146,6 +153,7 @@ pub struct FunctionDeclaration {
     pub name: String,
     pub params: Vec<String>,
     pub body: Option<Block>,
+    pub storage_class: Option<StorageClass>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -155,4 +163,4 @@ pub enum Declaration {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Program(pub Vec<FunctionDeclaration>);
+pub struct Program(pub Vec<Declaration>);

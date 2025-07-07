@@ -2,11 +2,31 @@ use std::collections::HashMap;
 
 use super::types::Type;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitialValue {
+    Tentative,
+    Initial(i64),
+    NoInitializer,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IdentifierAttrs {
+    FunAttr {
+        defined: bool,
+        global: bool,
+        stack_frame_size: isize,
+    },
+    StaticAttr {
+        init: InitialValue,
+        global: bool,
+    },
+    LocalAttr,
+}
+
 #[derive(Debug)]
 pub struct Entry {
     pub t: Type,
-    pub is_defined: bool, // only used for functions
-    pub stack_frame_size: isize,
+    pub attrs: IdentifierAttrs,
 }
 
 #[derive(Debug)]
@@ -33,24 +53,36 @@ impl SymbolTable {
         }
     }
 
-    pub fn add_var(&mut self, name: &str, t: Type) {
+    pub fn add_automatic_var(&mut self, name: &str, t: Type) {
         self.table.insert(
             name.to_string(),
             Entry {
                 t,
-                is_defined: false,
-                stack_frame_size: 0,
+                attrs: IdentifierAttrs::LocalAttr,
             },
         );
     }
 
-    pub fn add_fun(&mut self, name: &str, t: Type, is_defined: bool) {
+    pub fn add_static_var(&mut self, name: &str, t: Type, global: bool, init: InitialValue) {
         self.table.insert(
             name.to_string(),
             Entry {
                 t,
-                is_defined,
-                stack_frame_size: 0,
+                attrs: { IdentifierAttrs::StaticAttr { init, global } },
+            },
+        );
+    }
+
+    pub fn add_fun(&mut self, name: &str, t: Type, global: bool, defined: bool) {
+        self.table.insert(
+            name.to_string(),
+            Entry {
+                t,
+                attrs: IdentifierAttrs::FunAttr {
+                    global,
+                    defined,
+                    stack_frame_size: 0,
+                },
             },
         );
     }
@@ -65,14 +97,61 @@ impl SymbolTable {
         self.table.get(name)
     }
 
+    pub fn is_global(&self, name: &str) -> bool {
+        self.table
+            .get(name)
+            .map_or(false, |entry| match &entry.attrs {
+                IdentifierAttrs::LocalAttr => false,
+                IdentifierAttrs::StaticAttr { global, .. } => *global,
+                IdentifierAttrs::FunAttr { global, .. } => *global,
+            })
+    }
+
+    pub fn is_static(&self, name: &str) -> bool {
+        self.table
+            .get(name)
+            .map_or(false, |entry| match &entry.attrs {
+                IdentifierAttrs::LocalAttr => false,
+                IdentifierAttrs::StaticAttr { .. } => true,
+                IdentifierAttrs::FunAttr { .. } => {
+                    panic!("Internal error: functions don't have storage duration")
+                }
+            })
+    }
+
+    pub fn bindings(&self) -> Vec<(String, &Entry)> {
+        self.table
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry))
+            .collect()
+    }
+
     pub fn is_defined(&self, name: &str) -> bool {
         self.table.contains_key(name)
     }
 
     pub fn set_bytes_required(&mut self, name: &str, bytes_required: isize) {
-        self.modify(name, |mut entry| {
-            entry.stack_frame_size = bytes_required;
-            entry
+        self.modify(name, |mut entry| match &mut entry.attrs {
+            IdentifierAttrs::FunAttr {
+                stack_frame_size, ..
+            } => {
+                *stack_frame_size = bytes_required;
+                entry
+            }
+            _ => {
+                panic!("Internal error: not a function");
+            }
         });
+    }
+
+    pub fn get_bytes_required(&self, name: &str) -> isize {
+        match self.get(name).attrs {
+            IdentifierAttrs::FunAttr {
+                stack_frame_size, ..
+            } => stack_frame_size,
+            _ => {
+                panic!("Internal error: not a function");
+            }
+        }
     }
 }
