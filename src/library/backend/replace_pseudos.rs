@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::library::{
     assembly::{Instruction, Operand, Program, TopLevel},
-    symbols::SymbolTable,
+    backend::assembly_symbols::SymbolTable,
+    util::rounding::round_away_from_zero,
 };
 
 #[derive(Debug)]
@@ -31,7 +32,12 @@ impl ReplacementState {
                     // We haven't already assigned it a stack slot;
                     // assign it and update state
                     } else {
-                        let new_offset = self.current_offset - 4;
+                        let size = symbols.get_size(s);
+                        let alignment = symbols.get_alignment(s);
+                        let new_offset = round_away_from_zero(
+                            alignment as isize,
+                            self.current_offset - size as isize,
+                        );
                         self.offset_map.insert(s.to_string(), new_offset);
                         self.current_offset = new_offset;
                         Operand::Stack(new_offset)
@@ -48,32 +54,38 @@ impl ReplacementState {
         symbols: &SymbolTable,
     ) -> Instruction {
         match instruction {
-            Instruction::Mov(src, dst) => {
+            Instruction::Mov(t, src, dst) => {
                 let new_src = self.replace_operand(src, symbols);
                 let new_dst = self.replace_operand(dst, symbols);
-                Instruction::Mov(new_src, new_dst)
+                Instruction::Mov(t.clone(), new_src, new_dst)
             }
-            Instruction::Unary(op, dst) => {
+            Instruction::Movsx(src, dst) => {
+                let new_src = self.replace_operand(src, symbols);
                 let new_dst = self.replace_operand(dst, symbols);
-                Instruction::Unary(op.clone(), new_dst)
+                Instruction::Movsx(new_src, new_dst)
             }
-            Instruction::Binary { op, src, dst } => {
+            Instruction::Unary(t, op, dst) => {
+                let new_dst = self.replace_operand(dst, symbols);
+                Instruction::Unary(t.clone(), op.clone(), new_dst)
+            }
+            Instruction::Binary { op, t, src, dst } => {
                 let new_src = self.replace_operand(src, symbols);
                 let new_dst = self.replace_operand(dst, symbols);
                 Instruction::Binary {
                     op: op.clone(),
+                    t: t.clone(),
                     src: new_src,
                     dst: new_dst,
                 }
             }
-            Instruction::Cmp(op1, op2) => {
+            Instruction::Cmp(t, op1, op2) => {
                 let new_op1 = self.replace_operand(op1, symbols);
                 let new_op2 = self.replace_operand(op2, symbols);
-                Instruction::Cmp(new_op1, new_op2)
+                Instruction::Cmp(t.clone(), new_op1, new_op2)
             }
-            Instruction::Idiv(op) => {
+            Instruction::Idiv(t, op) => {
                 let new_op = self.replace_operand(op, symbols);
-                Instruction::Idiv(new_op)
+                Instruction::Idiv(t.clone(), new_op)
             }
             Instruction::SetCC(code, op) => {
                 let new_op = self.replace_operand(op, symbols);
@@ -84,13 +96,11 @@ impl ReplacementState {
                 Instruction::Push(new_op)
             }
             Instruction::Ret
-            | Instruction::Cdq
+            | Instruction::Cdq(_)
             | Instruction::Label(_)
             | Instruction::JmpCC(_, _)
             | Instruction::Jmp(_)
-            | Instruction::DeallocateStack(_)
-            | Instruction::Call(_)
-            | Instruction::AllocateStack(_) => instruction.clone(),
+            | Instruction::Call(_) => instruction.clone(),
         }
     }
 }

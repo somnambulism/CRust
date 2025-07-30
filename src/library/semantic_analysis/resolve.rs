@@ -2,8 +2,12 @@ use std::collections::HashMap;
 
 use crate::library::{
     ast::{
-        Block, BlockItem, Declaration, Exp, ForInit, FunctionDeclaration, Program, Statement,
-        StorageClass, VariableDeclaration,
+        block_items::{
+            Block, BlockItem, Declaration, ForInit, FunctionDeclaration, Program, Statement,
+            VariableDeclaration,
+        },
+        storage_class::StorageClass,
+        untyped_exp::Exp,
     },
     util::unique_ids::make_named_temporary,
 };
@@ -68,7 +72,11 @@ impl Resolver {
                     |v| Exp::Var(v.unique_name.clone()),
                 )
             }
-            // recursively process operands for unary, binary and conditional
+            // recursively process operands for casts unary, binary and conditional
+            Exp::Cast { target_type, e } => Exp::Cast {
+                target_type: target_type.clone(),
+                e: self.resolve_exp(e).into(),
+            },
             Exp::Unary(op, e) => Exp::Unary(op.clone(), Box::new(self.resolve_exp(e))),
             Exp::Binary(op, e1, e2) => Exp::Binary(
                 op.clone(),
@@ -95,7 +103,7 @@ impl Resolver {
                 }
             }
             // Nothing to do for constant
-            Exp::Constant(c) => Exp::Constant(*c),
+            Exp::Constant(c) => Exp::Constant(c.clone()),
             Exp::CompoundAssign(op, lhs, rhs) => {
                 // validate that lhs is an lvalue
                 if let Exp::Var(_) = lhs.as_ref() {
@@ -166,22 +174,24 @@ impl Resolver {
         &mut self,
         VariableDeclaration {
             name,
+            var_type,
             init,
             storage_class,
-        }: VariableDeclaration,
-    ) -> VariableDeclaration {
+        }: VariableDeclaration<Exp>,
+    ) -> VariableDeclaration<Exp> {
         let unique_name = self.resolve_local_var_helper(&name, &storage_class);
 
         let resolved_init = init.map(|init| self.resolve_exp(&init));
 
         VariableDeclaration {
             name: unique_name,
+            var_type,
             init: resolved_init,
             storage_class,
         }
     }
 
-    fn resolve_for_init(&mut self, init: ForInit) -> ForInit {
+    fn resolve_for_init(&mut self, init: ForInit<Exp>) -> ForInit<Exp> {
         match init {
             ForInit::InitExp(e) => ForInit::InitExp(self.resolve_optional_exp(e)),
             ForInit::InitDecl(d) => {
@@ -191,7 +201,7 @@ impl Resolver {
         }
     }
 
-    fn resolve_statement(&mut self, statement: Statement) -> Statement {
+    fn resolve_statement(&mut self, statement: Statement<Exp>) -> Statement<Exp> {
         match statement {
             Statement::Return(e) => Statement::Return(self.resolve_exp(&e)),
             Statement::Expression(e) => Statement::Expression(self.resolve_exp(&e)),
@@ -286,7 +296,7 @@ impl Resolver {
         }
     }
 
-    fn resolve_block_item(&mut self, item: BlockItem) -> BlockItem {
+    fn resolve_block_item(&mut self, item: BlockItem<Exp>) -> BlockItem<Exp> {
         match item {
             BlockItem::S(s) => {
                 // resolving a statement does not change the variable map
@@ -302,7 +312,7 @@ impl Resolver {
         }
     }
 
-    fn resolve_block(&mut self, Block(items): Block) -> Block {
+    fn resolve_block(&mut self, Block(items): Block<Exp>) -> Block<Exp> {
         let resolved_items = items
             .into_iter()
             .map(|item| self.resolve_block_item(item))
@@ -310,7 +320,7 @@ impl Resolver {
         Block(resolved_items)
     }
 
-    fn resolve_local_declaration(&mut self, d: Declaration) -> Declaration {
+    fn resolve_local_declaration(&mut self, d: Declaration<Exp>) -> Declaration<Exp> {
         match d {
             Declaration::VarDecl(vd) => {
                 let resolved_vd = self.resolve_local_var_declaration(vd);
@@ -339,7 +349,10 @@ impl Resolver {
             .collect()
     }
 
-    fn resolve_function_declaration(&mut self, func: FunctionDeclaration) -> FunctionDeclaration {
+    fn resolve_function_declaration(
+        &mut self,
+        func: FunctionDeclaration<Exp>,
+    ) -> FunctionDeclaration<Exp> {
         if let Some(VarEntry {
             from_current_scope: true,
             has_linkage: false,
@@ -369,8 +382,8 @@ impl Resolver {
 
     fn resolve_file_scope_variable_declaration(
         &mut self,
-        vd: VariableDeclaration,
-    ) -> VariableDeclaration {
+        vd: VariableDeclaration<Exp>,
+    ) -> VariableDeclaration<Exp> {
         let name = vd.name.clone();
         self.id_map.insert(
             name.clone(),
@@ -383,7 +396,7 @@ impl Resolver {
         vd
     }
 
-    fn resolve_global_declaration(&mut self, d: Declaration) -> Declaration {
+    fn resolve_global_declaration(&mut self, d: Declaration<Exp>) -> Declaration<Exp> {
         match d {
             Declaration::FunDecl(fd) => {
                 let fd = self.resolve_function_declaration(fd);
@@ -396,7 +409,7 @@ impl Resolver {
         }
     }
 
-    pub fn resolve(&mut self, Program(decls): Program) -> Program {
+    pub fn resolve(&mut self, Program(decls): Program<Exp>) -> Program<Exp> {
         Program(
             decls
                 .into_iter()

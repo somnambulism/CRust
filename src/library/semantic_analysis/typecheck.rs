@@ -1,11 +1,35 @@
+use core::panic;
+use std::iter::zip;
+
 use crate::library::{
     ast::{
-        Block, BlockItem, Declaration, Exp, ForInit, FunctionDeclaration, Program, Statement,
-        StorageClass, VariableDeclaration,
+        block_items::{
+            Block, BlockItem, Declaration, ForInit, FunctionDeclaration, Program, Statement,
+            VariableDeclaration,
+        },
+        ops::{BinaryOperator, CompoundAssignOperator, UnaryOperator},
+        storage_class::StorageClass,
+        typed_exp::{InnerExp, TypedExp},
+        untyped_exp::Exp,
     },
+    r#const::T,
+    const_convert::const_convert,
+    initializers::{StaticInit, zero},
     symbols::{Entry, IdentifierAttrs, InitialValue, SymbolTable},
     types::Type,
 };
+
+fn convert_to(e: TypedExp, target_type: Type) -> TypedExp {
+    let cast = InnerExp::Cast {
+        target_type: target_type.clone(),
+        e: Box::new(e),
+    };
+    TypedExp::set_type(cast, target_type)
+}
+
+fn get_common_type(t1: &Type, t2: &Type) -> Type {
+    if t1 == t2 { t1.clone() } else { Type::Long }
+}
 
 pub struct TypeChecker {
     pub symbol_table: SymbolTable,
@@ -18,148 +42,345 @@ impl TypeChecker {
         }
     }
 
-    fn typecheck_exp(&mut self, exp: &Exp) {
+    fn typecheck_var(&self, v: &str) -> TypedExp {
+        let v_type = self.symbol_table.get(v).t.clone();
+        let e = InnerExp::Var(v.to_string());
+        match v_type {
+            Type::FunType { .. } => {
+                panic!("Tried to use function name {} as variable", v);
+            }
+            Type::Int | Type::Long => TypedExp::set_type(e, v_type),
+        }
+    }
+
+    fn typecheck_const(&self, c: &T) -> TypedExp {
+        let e = InnerExp::Constant(c.clone());
+        match c {
+            T::ConstInt(_) => TypedExp::set_type(e, Type::Int),
+            T::ConstLong(_) => TypedExp::set_type(e, Type::Long),
+        }
+    }
+
+    fn typecheck_exp(&self, exp: &Exp) -> TypedExp {
         match exp {
-            Exp::FunCall { f, args } => {
-                let t = &self.symbol_table.get(f).t;
-                match t {
-                    Type::Int => {
-                        panic!("Tried to use variable {} as function name", f);
-                    }
-                    Type::FunType { param_count } => {
-                        if args.len() != *param_count {
-                            panic!("Function {} called with wrong number of arguments", f);
-                        } else {
-                            args.iter().for_each(|arg| self.typecheck_exp(arg));
-                        }
-                    }
-                }
+            Exp::Var(v) => self.typecheck_var(v),
+            Exp::Constant(c) => self.typecheck_const(c),
+            Exp::Cast {
+                target_type,
+                e: inner,
+            } => {
+                let cast_exp = InnerExp::Cast {
+                    target_type: target_type.clone(),
+                    e: self.typecheck_exp(inner).into(),
+                };
+                TypedExp::set_type(cast_exp, target_type.clone())
             }
-            Exp::Var(v) => {
-                let t = &self.symbol_table.get(v).t;
-                if let Type::FunType { .. } = t {
-                    panic!("Tried to use function name {} as variable", v);
-                }
+            Exp::Unary(op, inner) => self.typecheck_unary(&op, &inner),
+            Exp::Binary(op, e1, e2) => self.typecheck_binary(op, e1, e2),
+            Exp::PostfixDecrement(inner) => {
+                self.typecheck_increment_decrement(inner, InnerExp::PostfixDecrement)
             }
-            Exp::Unary(_, inner) => self.typecheck_exp(&inner),
-            Exp::Binary(_, e1, e2) => {
-                self.typecheck_exp(&e1);
-                self.typecheck_exp(&e2);
+            Exp::PostfixIncrement(inner) => {
+                self.typecheck_increment_decrement(inner, InnerExp::PostfixIncrement)
             }
-            Exp::PostfixDecrement(inner)
-            | Exp::PostfixIncrement(inner)
-            | Exp::PrefixDecrement(inner)
-            | Exp::PrefixIncrement(inner) => self.typecheck_exp(&inner),
-            Exp::Assignment(lhs, rhs) | Exp::CompoundAssign(_, lhs, rhs) => {
-                self.typecheck_exp(&lhs);
-                self.typecheck_exp(&rhs);
+            Exp::PrefixDecrement(inner) => {
+                self.typecheck_increment_decrement(inner, InnerExp::PrefixDecrement)
             }
+            Exp::PrefixIncrement(inner) => {
+                self.typecheck_increment_decrement(inner, InnerExp::PrefixIncrement)
+            }
+            Exp::Assignment(lhs, rhs) => self.typecheck_assignment(lhs, rhs),
+            Exp::CompoundAssign(op, lhs, rhs) => self.typecheck_compound_assignment(op, lhs, rhs),
             Exp::Conditional {
                 condition,
                 then_result,
                 else_result,
-            } => {
-                self.typecheck_exp(&condition);
-                self.typecheck_exp(&then_result);
-                self.typecheck_exp(&else_result);
+            } => self.typecheck_conditional(condition, then_result, else_result),
+            Exp::FunCall { f, args } => self.typecheck_fun_call(f, args),
+        }
+    }
+
+    fn typecheck_unary(&self, op: &UnaryOperator, inner: &Exp) -> TypedExp {
+        let typed_inner = self.typecheck_exp(inner);
+        let unary_exp = InnerExp::Unary(op.clone(), Box::new(typed_inner.clone()));
+        match op {
+            UnaryOperator::Not => TypedExp::set_type(unary_exp, Type::Int),
+            _ => TypedExp::set_type(unary_exp, typed_inner.get_type()),
+        }
+    }
+
+    fn typecheck_binary(&self, op: &BinaryOperator, e1: &Exp, e2: &Exp) -> TypedExp {
+        let typed_e1 = self.typecheck_exp(e1);
+        let typed_e2 = self.typecheck_exp(e2);
+        match op {
+            BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor => {
+                let typed_binexp = InnerExp::Binary(op.clone(), typed_e1.into(), typed_e2.into());
+                TypedExp::set_type(typed_binexp, Type::Int)
             }
-            Exp::Constant(_) => (),
+            _ => {
+                let t1 = typed_e1.get_type();
+                let t2 = typed_e2.get_type();
+                let common_type = get_common_type(&t1, &t2);
+                let converted_e1 = convert_to(typed_e1, common_type.clone());
+                let converted_e2 = convert_to(typed_e2, common_type.clone());
+                let binary_exp =
+                    InnerExp::Binary(op.clone(), converted_e1.into(), converted_e2.into());
+                match op {
+                    BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide
+                    | BinaryOperator::Mod
+                    | BinaryOperator::BitwiseAnd
+                    | BinaryOperator::BitwiseOr => TypedExp::set_type(binary_exp, common_type),
+                    BinaryOperator::LeftShift | BinaryOperator::RightShift => {
+                        TypedExp::set_type(binary_exp, t1)
+                    }
+                    _ => TypedExp::set_type(binary_exp, Type::Int),
+                }
+            }
         }
     }
 
-    fn typecheck_block(&mut self, b: &Block) {
-        b.0.iter().for_each(|item| self.typecheck_block_item(item));
+    fn typecheck_increment_decrement<F>(&self, inner: &Exp, ctor: F) -> TypedExp
+    where
+        F: Fn(Box<TypedExp>) -> InnerExp,
+    {
+        let typed_inner = self.typecheck_exp(inner);
+        let inner_exp = ctor(Box::new(typed_inner.clone()));
+        TypedExp::set_type(inner_exp, typed_inner.get_type())
     }
 
-    fn typecheck_block_item(&mut self, block_item: &BlockItem) {
+    fn typecheck_assignment(&self, lhs: &Exp, rhs: &Exp) -> TypedExp {
+        let typed_lhs = self.typecheck_exp(lhs);
+        let lhs_type = typed_lhs.get_type();
+        let typed_rhs = self.typecheck_exp(rhs);
+        let converted_rhs = convert_to(typed_rhs, lhs_type.clone());
+        let assign_exp = InnerExp::Assignment(typed_lhs.into(), converted_rhs.into());
+        TypedExp::set_type(assign_exp, lhs_type)
+    }
+
+    fn typecheck_compound_assignment(
+        &self,
+        op: &CompoundAssignOperator,
+        lhs: &Exp,
+        rhs: &Exp,
+    ) -> TypedExp {
+        let typed_lhs = self.typecheck_exp(lhs);
+        let lhs_type = typed_lhs.get_type();
+        let typed_rhs = self.typecheck_exp(rhs);
+        let converted_rhs = convert_to(typed_rhs, lhs_type.clone());
+        let assign_exp =
+            InnerExp::CompoundAssign(op.clone(), typed_lhs.into(), converted_rhs.into());
+        TypedExp::set_type(assign_exp, lhs_type)
+    }
+
+    fn typecheck_conditional(
+        &self,
+        condition: &Exp,
+        then_result: &Exp,
+        else_result: &Exp,
+    ) -> TypedExp {
+        let typed_condition = self.typecheck_exp(condition);
+        let typed_then = self.typecheck_exp(then_result);
+        let typed_else = self.typecheck_exp(else_result);
+        let common_type = get_common_type(&typed_then.get_type(), &typed_else.get_type());
+        let converted_then = convert_to(typed_then, common_type.clone());
+        let converted_else = convert_to(typed_else, common_type.clone());
+        let conditional_exp = InnerExp::Conditional {
+            condition: typed_condition.into(),
+            then_result: converted_then.into(),
+            else_result: converted_else.into(),
+        };
+        TypedExp::set_type(conditional_exp, common_type)
+    }
+
+    fn typecheck_fun_call(&self, f: &str, args: &[Exp]) -> TypedExp {
+        let f_type = self.symbol_table.get(f).t.clone();
+
+        match f_type {
+            Type::Int | Type::Long => {
+                panic!("Tried to use variable {} as function name", f);
+            }
+            Type::FunType {
+                param_types,
+                ret_type,
+            } => {
+                if param_types.len() != args.len() {
+                    panic!("Function {} called with wrong number of arguments", f);
+                }
+                let converted_args =
+                    args.iter()
+                        .zip(param_types.iter())
+                        .map(|(arg, param_type)| {
+                            convert_to(self.typecheck_exp(arg), param_type.clone())
+                        });
+                let call_exp = InnerExp::FunCall {
+                    f: f.to_string(),
+                    args: converted_args.collect(),
+                };
+                TypedExp::set_type(call_exp, *ret_type)
+            }
+        }
+    }
+
+    // convert a constant to a static initializer, performing type conversion if
+    // needed
+    fn to_static_init(&self, exp: &Exp, var_type: &Type) -> InitialValue {
+        match exp {
+            Exp::Constant(c) => {
+                let init_val = match const_convert(var_type, &c) {
+                    T::ConstInt(i) => StaticInit::IntInit(i),
+                    T::ConstLong(l) => StaticInit::LongInit(l),
+                };
+                InitialValue::Initial(init_val)
+            }
+            _ => {
+                panic!("Non-constant initializer on static variable");
+            }
+        }
+    }
+
+    fn typecheck_block(&mut self, ret_type: &Type, b: &Block<Exp>) -> Block<TypedExp> {
+        Block(
+            b.0.iter()
+                .map(|item| self.typecheck_block_item(ret_type, item))
+                .collect(),
+        )
+    }
+
+    fn typecheck_block_item(
+        &mut self,
+        ret_type: &Type,
+        block_item: &BlockItem<Exp>,
+    ) -> BlockItem<TypedExp> {
         match block_item {
-            BlockItem::S(s) => self.typecheck_statement(s),
-            BlockItem::D(d) => self.typecheck_local_decl(d),
+            BlockItem::S(s) => BlockItem::S(self.typecheck_statement(ret_type, s)),
+            BlockItem::D(d) => BlockItem::D(self.typecheck_local_decl(d)),
         }
     }
 
-    fn typecheck_statement(&mut self, statement: &Statement) {
+    fn typecheck_statement(
+        &mut self,
+        ret_type: &Type,
+        statement: &Statement<Exp>,
+    ) -> Statement<TypedExp> {
         match statement {
-            Statement::Return(e) => self.typecheck_exp(e),
-            Statement::Expression(e) => self.typecheck_exp(e),
+            Statement::Return(e) => {
+                let typed_e = self.typecheck_exp(e);
+                Statement::Return(convert_to(typed_e, ret_type.clone()))
+            }
+            Statement::Expression(e) => Statement::Expression(self.typecheck_exp(e)),
             Statement::If {
                 condition,
                 then_clause,
                 else_clause,
-            } => {
-                self.typecheck_exp(condition);
-                self.typecheck_statement(&then_clause);
-                if let Some(else_clause) = else_clause {
-                    self.typecheck_statement(&else_clause);
-                }
-            }
+            } => Statement::If {
+                condition: self.typecheck_exp(condition),
+                then_clause: self.typecheck_statement(&ret_type, &then_clause).into(),
+                else_clause: else_clause
+                    .as_ref()
+                    .map(|e| self.typecheck_statement(&ret_type, e).into()),
+            },
             Statement::Switch {
-                condition, body, ..
-            } => {
-                self.typecheck_exp(condition);
-                self.typecheck_statement(&body);
+                condition,
+                body,
+                cases,
+                id,
+            } => Statement::Switch {
+                condition: self.typecheck_exp(condition),
+                body: self.typecheck_statement(&ret_type, body).into(),
+                cases: cases.clone(),
+                id: id.clone(),
+            },
+            Statement::Case {
+                condition,
+                body,
+                switch_label,
+            } => Statement::Case {
+                condition: *condition,
+                body: self.typecheck_statement(&ret_type, body).into(),
+                switch_label: switch_label.clone(),
+            },
+            Statement::Default { body, switch_label } => Statement::Default {
+                body: self.typecheck_statement(&ret_type, body).into(),
+                switch_label: switch_label.clone(),
+            },
+            Statement::Compound(block) => {
+                Statement::Compound(self.typecheck_block(&ret_type, block))
             }
-            Statement::Case { body, .. } => self.typecheck_statement(&body),
-            Statement::Default { body, .. } => self.typecheck_statement(&body),
-            Statement::Compound(block) => self.typecheck_block(block),
             Statement::While {
-                condition, body, ..
-            } => {
-                self.typecheck_exp(condition);
-                self.typecheck_statement(&body);
-            }
+                condition,
+                body,
+                id,
+            } => Statement::While {
+                condition: self.typecheck_exp(condition),
+                body: self.typecheck_statement(&ret_type, body).into(),
+                id: id.clone(),
+            },
             Statement::DoWhile {
-                body, condition, ..
-            } => {
-                self.typecheck_statement(&body);
-                self.typecheck_exp(condition);
-            }
+                body,
+                condition,
+                id,
+            } => Statement::DoWhile {
+                body: self.typecheck_statement(&ret_type, body).into(),
+                condition: self.typecheck_exp(condition),
+                id: id.clone(),
+            },
             Statement::For {
                 init,
                 condition,
                 post,
                 body,
-                ..
+                id,
             } => {
-                match init {
+                let typechecked_for_init = match init {
                     ForInit::InitDecl(VariableDeclaration {
                         storage_class: Some(_),
                         ..
                     }) => {
                         panic!("Storage class not permitted on declaration in for loop header");
                     }
-                    ForInit::InitDecl(d) => self.typecheck_local_var_decl(&d),
+                    ForInit::InitDecl(d) => ForInit::InitDecl(self.typecheck_local_var_decl(d)),
                     ForInit::InitExp(e) => {
-                        if let Some(e) = e {
-                            self.typecheck_exp(e);
-                        }
+                        ForInit::InitExp(Option::map(e.as_ref(), |e| self.typecheck_exp(e)))
                     }
+                };
+                Statement::For {
+                    init: typechecked_for_init,
+                    condition: Option::map(condition.as_ref(), |c| self.typecheck_exp(c)),
+                    post: Option::map(post.as_ref(), |p| self.typecheck_exp(p)),
+                    body: self.typecheck_statement(&ret_type, body).into(),
+                    id: id.clone(),
                 }
-                if let Some(condition) = condition {
-                    self.typecheck_exp(condition);
-                }
-                if let Some(post) = post {
-                    self.typecheck_exp(post);
-                }
-                self.typecheck_statement(&body);
             }
-            Statement::Labelled { statement, .. } => self.typecheck_statement(statement),
-            Statement::Null | Statement::Break(_) | Statement::Continue(_) | Statement::Goto(_) => {
-                ()
-            }
+            Statement::Labelled {
+                label, statement, ..
+            } => Statement::Labelled {
+                label: label.clone(),
+                statement: self.typecheck_statement(ret_type, statement).into(),
+            },
+            Statement::Null => Statement::Null,
+            Statement::Break(s) => Statement::Break(s.to_string()),
+            Statement::Continue(s) => Statement::Continue(s.to_string()),
+            Statement::Goto(s) => Statement::Goto(s.to_string()),
         }
     }
 
-    fn typecheck_local_decl(&mut self, decl: &Declaration) {
+    fn typecheck_local_decl(&mut self, decl: &Declaration<Exp>) -> Declaration<TypedExp> {
         match decl {
-            Declaration::VarDecl(vd) => self.typecheck_local_var_decl(vd),
-            Declaration::FunDecl(fd) => self.typecheck_fn_decl(fd),
+            Declaration::VarDecl(vd) => Declaration::VarDecl(self.typecheck_local_var_decl(vd)),
+            Declaration::FunDecl(fd) => Declaration::FunDecl(self.typecheck_fn_decl(fd)),
         }
     }
 
-    fn typecheck_local_var_decl(&mut self, var_decl: &VariableDeclaration) {
+    fn typecheck_local_var_decl(
+        &mut self,
+        var_decl: &VariableDeclaration<Exp>,
+    ) -> VariableDeclaration<TypedExp> {
         let VariableDeclaration {
             name,
+            var_type,
             init,
             storage_class,
         } = var_decl;
@@ -172,58 +393,76 @@ impl TypeChecker {
                     Some(Entry { t, .. }) => {
                         // If an external local var is already in the symbol table, don't need
                         // to add it
-                        if t != &Type::Int {
-                            panic!("Function redeclared as variable");
+                        if t != var_type {
+                            panic!("Variable {} redeclared with different type", name);
                         }
                     }
                     None => {
                         self.symbol_table.add_static_var(
                             name,
-                            Type::Int,
+                            var_type.clone(),
                             true,
                             InitialValue::NoInitializer,
                         );
                     }
                 }
+                VariableDeclaration {
+                    name: name.clone(),
+                    init: None,
+                    storage_class: *storage_class,
+                    var_type: var_type.clone(),
+                }
             }
             Some(StorageClass::Static) => {
-                let ini = match init {
-                    Some(Exp::Constant(i)) => InitialValue::Initial(i.clone()),
-                    None => InitialValue::Initial(0),
-                    Some(_) => {
-                        panic!("non-constant initializer for static local variable");
-                    }
+                let zero_init = InitialValue::Initial(zero(var_type));
+                let static_init = match init {
+                    Some(i) => self.to_static_init(i, var_type),
+                    None => zero_init.clone(),
                 };
                 self.symbol_table
-                    .add_static_var(name, Type::Int, false, ini);
+                    .add_static_var(name, var_type.clone(), false, static_init);
+
+                // NOTE: we won't actually use init in subsequent passes so we can drop it
+                VariableDeclaration {
+                    name: name.clone(),
+                    init: None,
+                    storage_class: *storage_class,
+                    var_type: var_type.clone(),
+                }
             }
             None => {
-                self.symbol_table.add_automatic_var(name, Type::Int);
-                if let Some(init) = init {
-                    self.typecheck_exp(init);
+                self.symbol_table.add_automatic_var(name, var_type.clone());
+                VariableDeclaration {
+                    name: name.clone(),
+                    var_type: var_type.clone(),
+                    storage_class: *storage_class,
+                    init: Option::map(init.as_ref(), |e| {
+                        convert_to(self.typecheck_exp(e), var_type.clone())
+                    }),
                 }
             }
         }
     }
 
-    fn typecheck_fn_decl(&mut self, func_decl: &FunctionDeclaration) {
+    fn typecheck_fn_decl(
+        &mut self,
+        func_decl: &FunctionDeclaration<Exp>,
+    ) -> FunctionDeclaration<TypedExp> {
         let FunctionDeclaration {
             name,
+            fun_type,
             params,
             body,
             storage_class,
         } = func_decl;
 
-        let fun_type = Type::FunType {
-            param_count: params.len(),
-        };
         let has_body = body.is_some();
 
         let global = *storage_class != Some(StorageClass::Static);
         // helper function to reconcile current and previous declarations
         let check_against_previous = |entry: &Entry| {
             let Entry { t: prev_t, attrs } = entry;
-            if prev_t != &fun_type {
+            if prev_t != fun_type {
                 panic!("Redeclared function {} with a different type", name);
             } else {
                 match attrs {
@@ -259,44 +498,58 @@ impl TypeChecker {
         };
 
         self.symbol_table
-            .add_fun(name.as_str(), fun_type, global, defined);
+            .add_fun(name.as_str(), fun_type.clone(), global, defined);
+        let (params_ts, return_t) = match &fun_type {
+            Type::FunType {
+                param_types,
+                ret_type,
+            } => (param_types, ret_type),
+            _ => panic!("Internal error, function has non-function type"),
+        };
 
         if has_body {
-            for p in params {
-                self.symbol_table.add_automatic_var(&p, Type::Int)
+            for (p, t) in zip(params, params_ts) {
+                self.symbol_table.add_automatic_var(&p, t.clone());
             }
         }
+        let body = Option::map(body.as_ref(), |b| self.typecheck_block(return_t, b));
 
-        if let Some(body) = body {
-            self.typecheck_block(body);
+        FunctionDeclaration {
+            name: name.to_string(),
+            fun_type: fun_type.clone(),
+            params: params.to_vec(),
+            body,
+            storage_class: *storage_class,
         }
     }
 
-    fn typecheck_file_scope_var_decl(&mut self, var_decl: &VariableDeclaration) {
+    fn typecheck_file_scope_var_decl(
+        &mut self,
+        var_decl: &VariableDeclaration<Exp>,
+    ) -> VariableDeclaration<TypedExp> {
         let VariableDeclaration {
             name,
+            var_type,
             init,
             storage_class,
         } = var_decl;
-        let current_init = match init {
-            Some(Exp::Constant(c)) => InitialValue::Initial(c.clone()),
-            None => {
-                if *storage_class == Some(StorageClass::Extern) {
-                    InitialValue::NoInitializer
-                } else {
-                    InitialValue::Tentative
-                }
-            }
-            Some(_) => {
-                panic!("File scope variable has non-constant initializer");
-            }
+
+        let default_init = if let Some(StorageClass::Extern) = *storage_class {
+            InitialValue::NoInitializer
+        } else {
+            InitialValue::Tentative
         };
+        let static_init = match init {
+            Some(i) => self.to_static_init(i, var_type),
+            None => default_init,
+        };
+
         let current_global = *storage_class != Some(StorageClass::Static);
         let old_decl = self.symbol_table.get_opt(name.as_str());
         let (global, init) = if let Some(old_d) = old_decl {
             let Entry { t, attrs } = old_d;
-            if t != &Type::Int {
-                panic!("Function redeclared as variable");
+            if t != var_type {
+                panic!("Variable {} redeclared with different type", name);
             } else {
                 if let IdentifierAttrs::StaticAttr {
                     init: prev_init,
@@ -310,7 +563,7 @@ impl TypeChecker {
                     } else {
                         panic!("Conflicting variable linkage");
                     };
-                    let init = match (prev_init, &current_init) {
+                    let init = match (prev_init, &static_init) {
                         (InitialValue::Initial(_), InitialValue::Initial(_)) => {
                             panic!("Conflicting global variable definition");
                         }
@@ -320,7 +573,7 @@ impl TypeChecker {
                             InitialValue::Tentative | InitialValue::NoInitializer,
                         ) => InitialValue::Tentative,
                         (_, InitialValue::Initial(_)) | (InitialValue::NoInitializer, _) => {
-                            current_init.clone()
+                            static_init
                         }
                     };
                     (global, init)
@@ -331,23 +584,35 @@ impl TypeChecker {
                 }
             }
         } else {
-            (current_global, current_init)
+            (current_global, static_init)
         };
         self.symbol_table
-            .add_static_var(name, Type::Int, global, init);
-    }
-
-    fn typecheck_global_decl(&mut self, decl: &Declaration) {
-        match decl {
-            Declaration::FunDecl(fd) => self.typecheck_fn_decl(fd),
-            Declaration::VarDecl(vd) => self.typecheck_file_scope_var_decl(vd),
+            .add_static_var(name, var_type.clone(), global, init);
+        // Okay to drop initializer b/c it's never used after this pass
+        VariableDeclaration {
+            name: name.to_string(),
+            var_type: var_type.clone(),
+            init: None,
+            storage_class: *storage_class,
         }
     }
 
-    pub fn typecheck(&mut self, program: &Program) {
-        program
-            .0
-            .iter()
-            .for_each(|decl| self.typecheck_global_decl(decl));
+    fn typecheck_global_decl(&mut self, decl: &Declaration<Exp>) -> Declaration<TypedExp> {
+        match decl {
+            Declaration::FunDecl(fd) => Declaration::FunDecl(self.typecheck_fn_decl(fd)),
+            Declaration::VarDecl(vd) => {
+                Declaration::VarDecl(self.typecheck_file_scope_var_decl(vd))
+            }
+        }
+    }
+
+    pub fn typecheck(&mut self, program: &Program<Exp>) -> Program<TypedExp> {
+        Program(
+            program
+                .0
+                .iter()
+                .map(|decl| self.typecheck_global_decl(decl))
+                .collect(),
+        )
     }
 }

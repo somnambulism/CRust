@@ -1,3 +1,5 @@
+use crate::library::initializers::StaticInit;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Reg {
     AX,
@@ -7,6 +9,7 @@ pub enum Reg {
     R9,
     R10,
     R11,
+    SP,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,24 +49,30 @@ pub enum CondCode {
     LE,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum AsmType {
+    Longword,
+    Quadword,
+}
+
 #[derive(Clone, Debug)]
 pub enum Instruction {
-    Mov(Operand, Operand),
-    Unary(UnaryOperator, Operand),
+    Mov(AsmType, Operand, Operand),
+    Movsx(Operand, Operand),
+    Unary(UnaryOperator, AsmType, Operand),
     Binary {
         op: BinaryOperator,
+        t: AsmType,
         src: Operand,
         dst: Operand,
     },
-    Cmp(Operand, Operand),
-    Idiv(Operand),
-    Cdq,
+    Cmp(AsmType, Operand, Operand),
+    Idiv(AsmType, Operand),
+    Cdq(AsmType),
     Jmp(String),
     JmpCC(CondCode, String),
     SetCC(CondCode, Operand),
     Label(String),
-    AllocateStack(isize),
-    DeallocateStack(usize),
     Push(Operand),
     Call(String),
     Ret,
@@ -78,8 +87,9 @@ pub enum TopLevel {
     },
     StaticVariable {
         name: String,
+        alignment: i8,
         global: bool,
-        init: i64,
+        init: StaticInit,
     },
 }
 

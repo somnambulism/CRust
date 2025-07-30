@@ -1,3 +1,5 @@
+use crate::library::{r#const::T, initializers::StaticInit, types::Type};
+
 #[derive(Debug, PartialEq)]
 pub enum UnaryOperator {
     Complement,
@@ -27,13 +29,21 @@ pub enum BinaryOperator {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TackyVal {
-    Constant(i64),
+    Constant(T),
     Var(String),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Instruction {
     Return(TackyVal),
+    SignExtend {
+        src: TackyVal,
+        dst: TackyVal,
+    },
+    Truncate {
+        src: TackyVal,
+        dst: TackyVal,
+    },
     Unary {
         op: UnaryOperator,
         src: TackyVal,
@@ -70,8 +80,9 @@ pub enum TopLevel {
     },
     StaticVariable {
         name: String,
+        t: Type,
         global: bool,
-        init: i64,
+        init: StaticInit,
     },
 }
 

@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 
 use crate::library::{
-    ast::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement, SwitchCases},
+    ast::block_items::{
+        Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement, SwitchCases,
+    },
+    ast::untyped_exp::Exp,
     util::unique_ids::make_label,
 };
 
@@ -22,7 +25,7 @@ impl LoopsLabeller {
         }
     }
 
-    fn label_statement(&mut self, statement: Statement) -> Statement {
+    fn label_statement(&mut self, statement: Statement<Exp>) -> Statement<Exp> {
         match statement {
             Statement::Break(_) => {
                 if let Some(label) = self.break_stack.last() {
@@ -179,14 +182,14 @@ impl LoopsLabeller {
         }
     }
 
-    fn label_block_item(&mut self, item: BlockItem) -> BlockItem {
+    fn label_block_item(&mut self, item: BlockItem<Exp>) -> BlockItem<Exp> {
         match item {
             BlockItem::S(s) => BlockItem::S(self.label_statement(s)),
             BlockItem::D(_) => item,
         }
     }
 
-    fn label_block(&mut self, Block(b): Block) -> Block {
+    fn label_block(&mut self, Block(b): Block<Exp>) -> Block<Exp> {
         Block(
             b.into_iter()
                 .map(|item| self.label_block_item(item))
@@ -194,7 +197,7 @@ impl LoopsLabeller {
         )
     }
 
-    fn label_decl(&mut self, decl: Declaration) -> Declaration {
+    fn label_decl(&mut self, decl: Declaration<Exp>) -> Declaration<Exp> {
         match decl {
             Declaration::FunDecl(func) => Declaration::FunDecl(FunctionDeclaration {
                 body: func.body.map(|body| self.label_block(body)),
@@ -204,7 +207,7 @@ impl LoopsLabeller {
         }
     }
 
-    pub fn label_loops(&mut self, Program(decls): Program) -> Program {
+    pub fn label_loops(&mut self, Program(decls): Program<Exp>) -> Program<Exp> {
         Program(
             decls
                 .into_iter()

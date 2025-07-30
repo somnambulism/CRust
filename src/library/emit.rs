@@ -1,8 +1,11 @@
 use std::fs::File;
 use std::io::{Result, Write};
 
+use crate::library::assembly::AsmType;
+use crate::library::initializers::StaticInit;
+
 use super::assembly::{BinaryOperator, CondCode, Program, Reg, TopLevel, UnaryOperator};
-use super::symbols::SymbolTable;
+use super::backend::assembly_symbols::SymbolTable;
 use super::{
     assembly::{Instruction, Operand},
     settings::Target,
@@ -12,6 +15,83 @@ pub struct CodeEmitter {
     platform: Target,
     file: File,
     symbols: SymbolTable,
+}
+
+fn suffix(t: &AsmType) -> String {
+    match t {
+        AsmType::Longword => "l".to_string(),
+        AsmType::Quadword => "q".to_string(),
+    }
+}
+
+fn show_long_reg(reg: &Reg) -> String {
+    match reg {
+        Reg::AX => "%eax".to_string(),
+        Reg::CX => "%ecx".to_string(),
+        Reg::DX => "%edx".to_string(),
+        Reg::R8 => "%r8d".to_string(),
+        Reg::R9 => "%r9d".to_string(),
+        Reg::R10 => "%r10d".to_string(),
+        Reg::R11 => "%r11d".to_string(),
+        Reg::SP => panic!("Internal error: no 32-bit RSP"),
+    }
+}
+
+fn show_quadword_reg(reg: &Reg) -> String {
+    match reg {
+        Reg::AX => "%rax".to_string(),
+        Reg::CX => "%rcx".to_string(),
+        Reg::DX => "%rdx".to_string(),
+        Reg::R8 => "%r8".to_string(),
+        Reg::R9 => "%r9".to_string(),
+        Reg::R10 => "%r10".to_string(),
+        Reg::R11 => "%r11".to_string(),
+        Reg::SP => "%rsp".to_string(),
+    }
+}
+
+fn show_byte_reg(reg: &Reg) -> String {
+    match reg {
+        Reg::AX => "%al".to_string(),
+        Reg::CX => "%cl".to_string(),
+        Reg::DX => "%dl".to_string(),
+        Reg::R8 => "%r8b".to_string(),
+        Reg::R9 => "%r9b".to_string(),
+        Reg::R10 => "%r10b".to_string(),
+        Reg::R11 => "%r11b".to_string(),
+        Reg::SP => panic!("Internal error: no one-byte RSP"),
+    }
+}
+
+fn show_unary_instruction(operator: &UnaryOperator) -> String {
+    match operator {
+        UnaryOperator::Neg => "neg".to_string(),
+        UnaryOperator::Not => "not".to_string(),
+    }
+}
+
+fn show_binary_instruction(operator: &BinaryOperator) -> String {
+    match operator {
+        BinaryOperator::Add => "add".to_string(),
+        BinaryOperator::Sub => "sub".to_string(),
+        BinaryOperator::Mult => "imul".to_string(),
+        BinaryOperator::And => "and".to_string(),
+        BinaryOperator::Or => "or".to_string(),
+        BinaryOperator::Xor => "xor".to_string(),
+        BinaryOperator::Sal => "sal".to_string(),
+        BinaryOperator::Sar => "sar".to_string(),
+    }
+}
+
+fn show_cond_code(cond_code: &CondCode) -> String {
+    match cond_code {
+        CondCode::E => "e".to_string(),
+        CondCode::NE => "ne".to_string(),
+        CondCode::G => "g".to_string(),
+        CondCode::GE => "ge".to_string(),
+        CondCode::L => "l".to_string(),
+        CondCode::LE => "le".to_string(),
+    }
 }
 
 impl CodeEmitter {
@@ -60,162 +140,112 @@ impl CodeEmitter {
         }
     }
 
-    fn show_reg(&self, reg: &Reg) -> String {
-        match reg {
-            Reg::AX => "%eax".to_string(),
-            Reg::CX => "%ecx".to_string(),
-            Reg::DX => "%edx".to_string(),
-            Reg::R8 => "%r8d".to_string(),
-            Reg::R9 => "%r9d".to_string(),
-            Reg::R10 => "%r10d".to_string(),
-            Reg::R11 => "%r11d".to_string(),
-        }
-    }
-
-    fn show_operand(&self, operand: &Operand) -> String {
+    fn show_operand(&self, t: &AsmType, operand: &Operand) -> String {
         match operand {
-            Operand::Reg(r) => self.show_reg(r),
+            Operand::Reg(r) => match t {
+                AsmType::Longword => show_long_reg(r),
+                AsmType::Quadword => show_quadword_reg(r),
+            },
             Operand::Imm(i) => format!("${}", i),
             Operand::Stack(i) => format!("{}(%rbp)", i),
             Operand::Data(name) => format!("{}(%rip)", self.show_label(name)),
             // printing out pseudoregister is only for debugging
             Operand::Pseudo(name) => format!("%{}", name),
-            _ => todo!("Unsupported operand type: {:?}", operand),
-        }
-    }
-
-    fn show_byte_reg(&self, reg: &Reg) -> String {
-        match reg {
-            Reg::AX => "%al".to_string(),
-            Reg::CX => "%cl".to_string(),
-            Reg::DX => "%dl".to_string(),
-            Reg::R8 => "%r8b".to_string(),
-            Reg::R9 => "%r9b".to_string(),
-            Reg::R10 => "%r10b".to_string(),
-            Reg::R11 => "%r11b".to_string(),
         }
     }
 
     fn show_byte_operand(&self, operand: &Operand) -> String {
         match operand {
-            Operand::Reg(r) => self.show_byte_reg(r),
-            other => self.show_operand(other),
-        }
-    }
-
-    fn show_quarword_reg(&self, reg: &Reg) -> String {
-        match reg {
-            Reg::AX => "%rax".to_string(),
-            Reg::CX => "%rcx".to_string(),
-            Reg::DX => "%rdx".to_string(),
-            Reg::R8 => "%r8".to_string(),
-            Reg::R9 => "%r9".to_string(),
-            Reg::R10 => "%r10".to_string(),
-            Reg::R11 => "%r11".to_string(),
-        }
-    }
-
-    fn show_quadword_operand(&self, operand: &Operand) -> String {
-        match operand {
-            Operand::Reg(r) => self.show_quarword_reg(r),
-            other => self.show_operand(other),
-        }
-    }
-
-    fn show_unary_instruction(&self, operator: &UnaryOperator) -> String {
-        match operator {
-            UnaryOperator::Neg => "negl".to_string(),
-            UnaryOperator::Not => "notl".to_string(),
-        }
-    }
-
-    fn show_binary_instruction(&self, operator: &BinaryOperator) -> String {
-        match operator {
-            BinaryOperator::Add => "addl".to_string(),
-            BinaryOperator::Sub => "subl".to_string(),
-            BinaryOperator::Mult => "imull".to_string(),
-            BinaryOperator::And => "andl".to_string(),
-            BinaryOperator::Or => "orl".to_string(),
-            BinaryOperator::Xor => "xorl".to_string(),
-            BinaryOperator::Sal => "sall".to_string(),
-            BinaryOperator::Sar => "sarl".to_string(),
-        }
-    }
-
-    fn show_cond_code(&self, cond_code: &CondCode) -> String {
-        match cond_code {
-            CondCode::E => "e".to_string(),
-            CondCode::NE => "ne".to_string(),
-            CondCode::G => "g".to_string(),
-            CondCode::GE => "ge".to_string(),
-            CondCode::L => "l".to_string(),
-            CondCode::LE => "le".to_string(),
+            Operand::Reg(r) => show_byte_reg(r),
+            other => self.show_operand(&AsmType::Longword, other),
         }
     }
 
     fn emit_instruction(&mut self, instruction: &Instruction) -> Result<()> {
         match instruction {
-            Instruction::Mov(src, dst) => writeln!(
+            Instruction::Mov(t, src, dst) => writeln!(
                 self.file,
-                "\tmovl {}, {}",
-                self.show_operand(&src),
-                self.show_operand(&dst)
+                "\tmov{} {}, {}",
+                suffix(t),
+                self.show_operand(t, &src),
+                self.show_operand(t, &dst)
             ),
-            Instruction::Unary(operator, dst) => writeln!(
+            Instruction::Unary(operator, t, dst) => writeln!(
                 self.file,
-                "\t{} {}",
-                self.show_unary_instruction(operator),
-                self.show_operand(dst)
+                "\t{}{} {}",
+                show_unary_instruction(operator),
+                suffix(t),
+                self.show_operand(t, dst)
             ),
             Instruction::Binary {
                 op: op @ BinaryOperator::Sal | op @ BinaryOperator::Sar,
+                t,
                 src,
                 dst,
             } => writeln!(
                 self.file,
-                "\t{} {}, {}",
-                self.show_binary_instruction(op),
+                "\t{}{} {}, {}",
+                show_binary_instruction(op),
+                suffix(t),
                 self.show_byte_operand(src),
-                self.show_operand(dst)
+                self.show_operand(t, dst)
             ),
-            Instruction::Binary { op, src, dst } => writeln!(
+            Instruction::Binary { op, t, src, dst } => writeln!(
                 self.file,
-                "\t{} {}, {}",
-                self.show_binary_instruction(op),
-                self.show_operand(src),
-                self.show_operand(dst)
+                "\t{}{} {}, {}",
+                show_binary_instruction(op),
+                suffix(t),
+                self.show_operand(t, src),
+                self.show_operand(t, dst)
             ),
-            Instruction::Cmp(src, dst) => writeln!(
+            Instruction::Cmp(t, src, dst) => writeln!(
                 self.file,
-                "\tcmpl {}, {}",
-                self.show_operand(src),
-                self.show_operand(dst),
+                "\tcmp{} {}, {}",
+                suffix(t),
+                self.show_operand(t, src),
+                self.show_operand(t, dst),
             ),
-            Instruction::Idiv(operand) => {
-                writeln!(self.file, "\tidivl {}", self.show_operand(operand))
+            Instruction::Idiv(t, operand) => {
+                writeln!(
+                    self.file,
+                    "\tidiv{} {}",
+                    suffix(t),
+                    self.show_operand(t, operand)
+                )
             }
-            Instruction::Cdq => writeln!(self.file, "\tcdq"),
+            Instruction::Cdq(AsmType::Longword) => writeln!(self.file, "\tcdq"),
+            Instruction::Cdq(AsmType::Quadword) => writeln!(self.file, "\tcqo"),
             Instruction::Jmp(lbl) => writeln!(self.file, "\tjmp {}", self.show_local_label(lbl)),
             Instruction::JmpCC(code, lbl) => writeln!(
                 self.file,
                 "\tj{} {}",
-                self.show_cond_code(code),
+                show_cond_code(code),
                 self.show_local_label(lbl),
             ),
             Instruction::SetCC(code, operand) => writeln!(
                 self.file,
                 "\tset{} {}",
-                self.show_cond_code(code),
+                show_cond_code(code),
                 self.show_byte_operand(operand),
             ),
             Instruction::Label(lbl) => writeln!(self.file, "{}:", self.show_local_label(lbl)),
-            Instruction::AllocateStack(i) => writeln!(self.file, "\tsubq ${}, %rsp", i),
-            Instruction::DeallocateStack(i) => writeln!(self.file, "\taddq ${}, %rsp", i),
             Instruction::Push(op) => {
-                writeln!(self.file, "\tpushq {}", self.show_quadword_operand(op))
+                writeln!(
+                    self.file,
+                    "\tpushq {}",
+                    self.show_operand(&AsmType::Quadword, op)
+                )
             }
             Instruction::Call(f) => {
                 writeln!(self.file, "\tcall {}", self.show_fun_name(f))
+            }
+            Instruction::Movsx(src, dst) => {
+                writeln!(
+                    self.file,
+                    "\tmovslq {}, {}",
+                    self.show_operand(&AsmType::Longword, src),
+                    self.show_operand(&AsmType::Quadword, dst)
+                )
             }
             Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
         }
@@ -226,6 +256,20 @@ impl CodeEmitter {
             writeln!(self.file, "\t.globl {}", label)
         } else {
             Ok(())
+        }
+    }
+
+    fn emit_zero_init(&mut self, init: &StaticInit) -> Result<()> {
+        match init {
+            StaticInit::IntInit(_) => writeln!(self.file, "\t.zero 4"),
+            StaticInit::LongInit(_) => writeln!(self.file, "\t.zero 8"),
+        }
+    }
+
+    fn emit_init(&mut self, init: &StaticInit) -> Result<()> {
+        match init {
+            StaticInit::IntInit(i) => writeln!(self.file, "\t.long {}", i),
+            StaticInit::LongInit(l) => writeln!(self.file, "\t.quad {}", l),
         }
     }
 
@@ -252,24 +296,30 @@ impl CodeEmitter {
             TopLevel::StaticVariable {
                 name,
                 global,
-                init: 0,
-            } => {
+                init,
+                alignment,
+            } if init.is_zero() => {
                 let label = self.show_label(&name);
                 self.emit_global_directive(*global, &label)?;
                 writeln!(self.file, "\t.bss")?;
-                writeln!(self.file, "\t{} 4", self.align_directive())?;
+                writeln!(self.file, "\t{} {}", self.align_directive(), alignment)?;
                 writeln!(self.file, "{}:", label)?;
-                writeln!(self.file, "\t.zero 4")?;
+                self.emit_zero_init(&init)?;
                 writeln!(self.file)?;
                 Ok(())
             }
-            TopLevel::StaticVariable { name, global, init } => {
+            TopLevel::StaticVariable {
+                name,
+                global,
+                init,
+                alignment,
+            } => {
                 let label = self.show_label(&name);
                 self.emit_global_directive(*global, &label)?;
                 writeln!(self.file, "\t.data")?;
-                writeln!(self.file, "\t{} 4", self.align_directive())?;
+                writeln!(self.file, "\t{} {}", self.align_directive(), alignment)?;
                 writeln!(self.file, "{}:", label)?;
-                writeln!(self.file, "\t.long {}", init)?;
+                self.emit_init(&init)?;
                 writeln!(self.file)?;
                 Ok(())
             }

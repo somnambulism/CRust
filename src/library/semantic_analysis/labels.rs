@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    ast::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement},
+    ast::block_items::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement},
+    ast::untyped_exp::Exp,
     util::unique_ids::make_label,
 };
 
@@ -16,7 +17,7 @@ impl LabelsResolver {
         }
     }
 
-    fn resolve_labelled_statement(&mut self, statement: Statement) -> Statement {
+    fn resolve_labelled_statement(&mut self, statement: Statement<Exp>) -> Statement<Exp> {
         match statement {
             Statement::Labelled { label, statement } => {
                 if self.label_map.contains_key(&label) {
@@ -105,7 +106,7 @@ impl LabelsResolver {
         }
     }
 
-    fn resolve_goto_statement(&mut self, statement: Statement) -> Statement {
+    fn resolve_goto_statement(&mut self, statement: Statement<Exp>) -> Statement<Exp> {
         match statement {
             Statement::Goto(label) => {
                 let resolved_label = self.label_map.get(&label).unwrap_or_else(|| {
@@ -194,7 +195,7 @@ impl LabelsResolver {
         }
     }
 
-    fn resolve_labelled_block_item(&mut self, item: BlockItem) -> BlockItem {
+    fn resolve_labelled_block_item(&mut self, item: BlockItem<Exp>) -> BlockItem<Exp> {
         if let BlockItem::S(s) = item {
             // resolving a statement does not change the variable map
             let resolved_s = self.resolve_labelled_statement(s);
@@ -204,7 +205,7 @@ impl LabelsResolver {
         }
     }
 
-    fn resolve_goto_block_item(&mut self, item: BlockItem) -> BlockItem {
+    fn resolve_goto_block_item(&mut self, item: BlockItem<Exp>) -> BlockItem<Exp> {
         if let BlockItem::S(s) = item {
             // resolving a statement does not change the variable map
             let resolved_s = self.resolve_goto_statement(s);
@@ -214,13 +215,13 @@ impl LabelsResolver {
         }
     }
 
-    fn resolve_block(&mut self, Block(items): Block) -> Block {
-        let resolved_labels_items: Vec<BlockItem> = items
+    fn resolve_block(&mut self, Block(items): Block<Exp>) -> Block<Exp> {
+        let resolved_labels_items: Vec<BlockItem<Exp>> = items
             .into_iter()
             .map(|item| self.resolve_labelled_block_item(item))
             .collect();
 
-        let resolved_items: Vec<BlockItem> = resolved_labels_items
+        let resolved_items: Vec<BlockItem<Exp>> = resolved_labels_items
             .into_iter()
             .map(|item| self.resolve_goto_block_item(item))
             .collect();
@@ -228,7 +229,7 @@ impl LabelsResolver {
         Block(resolved_items)
     }
 
-    fn resolve_decl(&mut self, decl: Declaration) -> Declaration {
+    fn resolve_decl(&mut self, decl: Declaration<Exp>) -> Declaration<Exp> {
         match decl {
             Declaration::FunDecl(func) => {
                 let resolved_body = func.body.map(|body| self.resolve_block(body));
@@ -242,7 +243,7 @@ impl LabelsResolver {
     }
 }
 
-pub fn resolve_labels(Program(fn_defs): Program) -> Program {
+pub fn resolve_labels(Program(fn_defs): Program<Exp>) -> Program<Exp> {
     let fn_defs = fn_defs
         .into_iter()
         .map(|fn_def| {

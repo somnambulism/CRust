@@ -1,4 +1,9 @@
+use std::str::FromStr;
+
+use crate::library::util::utils::string_util;
+
 use super::tokens::Token;
+use num_bigint::BigInt;
 use regex::Regex;
 
 #[derive(Debug, Clone)]
@@ -24,10 +29,16 @@ impl Lexer {
                 re: Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*\b").unwrap(),
                 converter: Lexer::convert_identifier,
             },
+            // constants
             TokenDef {
                 re: Regex::new(r"^[0-9]+\b").unwrap(),
                 converter: Lexer::convert_int,
             },
+            TokenDef {
+                re: Regex::new(r"^[0-9]+[lL]\b").unwrap(),
+                converter: Lexer::convert_long,
+            },
+            // punctuation
             TokenDef {
                 re: Regex::new(r"^\(").unwrap(),
                 converter: |_s| Token::OpenParen,
@@ -246,6 +257,7 @@ impl Lexer {
             "continue" => Token::KWContinue,
             "static" => Token::KWStatic,
             "extern" => Token::KWExtern,
+            "long" => Token::KWLong,
             "goto" => Token::KWGoto,
             "switch" => Token::KWSwitch,
             "case" => Token::KWCase,
@@ -255,7 +267,13 @@ impl Lexer {
     }
 
     fn convert_int(s: &str) -> Token {
-        Token::Constant(s.parse::<i64>().unwrap())
+        Token::ConstInt(BigInt::from_str(s).unwrap())
+    }
+
+    fn convert_long(s: &str) -> Token {
+        // drop "l" suffix
+        let const_str = string_util::chop_suffix(s, 1);
+        Token::ConstLong(BigInt::from_str(const_str).unwrap())
     }
 }
 
@@ -279,7 +297,7 @@ mod tests {
         let lexer = Lexer::new();
         assert_eq!(
             lexer.lex("0;\t\n").unwrap(),
-            vec![Token::Constant(0), Token::Semicolon]
+            vec![Token::ConstInt(BigInt::ZERO), Token::Semicolon]
         );
     }
 
@@ -296,7 +314,7 @@ mod tests {
                 Token::CloseParen,
                 Token::OpenBrace,
                 Token::KWReturn,
-                Token::Constant(0),
+                Token::ConstInt(BigInt::ZERO),
                 Token::Semicolon,
                 Token::CloseBrace,
             ]
