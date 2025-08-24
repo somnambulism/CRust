@@ -261,7 +261,7 @@ impl CodeGen {
                         vec![
                             Instruction::Mov(src_t.clone(), asm_src1, Operand::Reg(Reg::AX)),
                             Instruction::Cdq(src_t.clone()),
-                            Instruction::Idiv(src_t.clone(), asm_src2),
+                            Instruction::Idiv(self.asm_type(src2).clone(), asm_src2),
                             Instruction::Mov(src_t, Operand::Reg(result_reg), asm_dst),
                         ]
                     }

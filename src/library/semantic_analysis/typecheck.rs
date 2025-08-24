@@ -1,5 +1,5 @@
 use core::panic;
-use std::iter::zip;
+use std::{collections::HashSet, iter::zip, ops::Rem};
 
 use crate::library::{
     ast::{
@@ -113,7 +113,7 @@ impl TypeChecker {
         let typed_e1 = self.typecheck_exp(e1);
         let typed_e2 = self.typecheck_exp(e2);
         match op {
-            BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor => {
+            BinaryOperator::And | BinaryOperator::Or => {
                 let typed_binexp = InnerExp::Binary(op.clone(), typed_e1.into(), typed_e2.into());
                 TypedExp::set_type(typed_binexp, Type::Int)
             }
@@ -132,7 +132,8 @@ impl TypeChecker {
                     | BinaryOperator::Divide
                     | BinaryOperator::Mod
                     | BinaryOperator::BitwiseAnd
-                    | BinaryOperator::BitwiseOr => TypedExp::set_type(binary_exp, common_type),
+                    | BinaryOperator::BitwiseOr
+                    | BinaryOperator::Xor => TypedExp::set_type(binary_exp, common_type),
                     BinaryOperator::LeftShift | BinaryOperator::RightShift => {
                         TypedExp::set_type(binary_exp, t1)
                     }
@@ -169,7 +170,11 @@ impl TypeChecker {
         let typed_lhs = self.typecheck_exp(lhs);
         let lhs_type = typed_lhs.get_type();
         let typed_rhs = self.typecheck_exp(rhs);
-        let converted_rhs = convert_to(typed_rhs, lhs_type.clone());
+        let rhs_type = typed_rhs.get_type();
+
+        let common_type = get_common_type(&lhs_type, &rhs_type);
+
+        let converted_rhs = convert_to(typed_rhs, common_type);
         let assign_exp =
             InnerExp::CompoundAssign(op.clone(), typed_lhs.into(), converted_rhs.into());
         TypedExp::set_type(assign_exp, lhs_type)
@@ -287,12 +292,43 @@ impl TypeChecker {
                 body,
                 cases,
                 id,
-            } => Statement::Switch {
-                condition: self.typecheck_exp(condition),
-                body: self.typecheck_statement(&ret_type, body).into(),
-                cases: cases.clone(),
-                id: id.clone(),
-            },
+            } => {
+                let typed_condition = self.typecheck_exp(condition);
+                let switch_type = typed_condition.get_type();
+
+                // Check and convert all case-constants to type of the switch
+                let mut converted_cases = HashSet::new();
+                for case in cases {
+                    if let Some(value) = case {
+                        // Convert value to type of the switch expression
+                        let converted_value = match switch_type {
+                            Type::Int => (*value).rem(0x100000000) as i64, // 2^32
+                            Type::Long => *value,
+                            _ => panic!("Switch condition must be integer type"),
+                        };
+
+                        // Check for duplicates after convert
+                        if converted_cases.contains(&Some(converted_value)) {
+                            panic!(
+                                "Duplicate case value {} after type conversion",
+                                converted_value
+                            );
+                        }
+
+                        converted_cases.insert(Some(converted_value));
+                    } else {
+                        // default case
+                        converted_cases.insert(None);
+                    }
+                }
+
+                Statement::Switch {
+                    condition: typed_condition,
+                    body: self.typecheck_statement(&ret_type, body).into(),
+                    cases: cases.clone(),
+                    id: id.clone(),
+                }
+            }
             Statement::Case {
                 condition,
                 body,

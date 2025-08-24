@@ -76,6 +76,15 @@ impl SymbolTable {
         self.table.get(name)
     }
 
+    pub fn get_type(&self, name: &str) -> Option<Type> {
+        let e = self.table.get(name);
+        if let Some(entry) = e {
+            Some(entry.t.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn is_global(&self, name: &str) -> bool {
         self.table
             .get(name)

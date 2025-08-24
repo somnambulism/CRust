@@ -94,3 +94,4 @@ the source code into C...
    - Extra: `switch` statements
 - Functions
 - Support for `static` and `extern` keywords.
+- Long type
