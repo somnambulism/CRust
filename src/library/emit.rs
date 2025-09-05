@@ -91,6 +91,10 @@ fn show_cond_code(cond_code: &CondCode) -> String {
         CondCode::GE => "ge".to_string(),
         CondCode::L => "l".to_string(),
         CondCode::LE => "le".to_string(),
+        CondCode::A => "a".to_string(),
+        CondCode::AE => "ae".to_string(),
+        CondCode::B => "b".to_string(),
+        CondCode::BE => "be".to_string(),
     }
 }
 
@@ -213,6 +217,14 @@ impl CodeEmitter {
                     self.show_operand(t, operand)
                 )
             }
+            Instruction::Div(t, operand) => {
+                writeln!(
+                    self.file,
+                    "\tdiv{} {}",
+                    suffix(t),
+                    self.show_operand(t, operand)
+                )
+            }
             Instruction::Cdq(AsmType::Longword) => writeln!(self.file, "\tcdq"),
             Instruction::Cdq(AsmType::Quadword) => writeln!(self.file, "\tcqo"),
             Instruction::Jmp(lbl) => writeln!(self.file, "\tjmp {}", self.show_local_label(lbl)),
@@ -248,6 +260,11 @@ impl CodeEmitter {
                 )
             }
             Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
+            Instruction::MovZeroExtend(..) => {
+                panic!(
+                    "Internal error: MovZeroExtend should have been removed in instruction rewrite pass"
+                )
+            }
         }
     }
 
@@ -261,8 +278,8 @@ impl CodeEmitter {
 
     fn emit_zero_init(&mut self, init: &StaticInit) -> Result<()> {
         match init {
-            StaticInit::IntInit(_) => writeln!(self.file, "\t.zero 4"),
-            StaticInit::LongInit(_) => writeln!(self.file, "\t.zero 8"),
+            StaticInit::IntInit(_) | StaticInit::UIntInit(_) => writeln!(self.file, "\t.zero 4"),
+            StaticInit::LongInit(_) | StaticInit::ULongInit(_) => writeln!(self.file, "\t.zero 8"),
         }
     }
 
@@ -270,6 +287,8 @@ impl CodeEmitter {
         match init {
             StaticInit::IntInit(i) => writeln!(self.file, "\t.long {}", i),
             StaticInit::LongInit(l) => writeln!(self.file, "\t.quad {}", l),
+            StaticInit::UIntInit(u) => writeln!(self.file, "\t.long {}", u),
+            StaticInit::ULongInit(l) => writeln!(self.file, "\t.quad {}", l),
         }
     }
 

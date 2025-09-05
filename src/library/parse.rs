@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -55,7 +55,10 @@ fn get_precedence(token: &Token) -> Option<i8> {
 
 // Helper function to check whether a token is a type specifier
 fn is_type_specifier(token: &Token) -> bool {
-    matches!(token, Token::KWInt | Token::KWLong)
+    matches!(
+        token,
+        Token::KWInt | Token::KWLong | Token::KWSigned | Token::KWUnsigned
+    )
 }
 
 // Helper function to check whether a token is a specifier
@@ -90,7 +93,7 @@ impl Parser {
 
     // Specifiers
 
-    // <type-specifier> ::= "int" | "long"
+    // <type-specifier> ::= "int" | "long" | "unsigned" | "signed"
     fn parse_type_specifier(&mut self) -> Result<Token, String> {
         let spec = self.tokens.take_token()?;
         if is_type_specifier(&spec) {
@@ -162,14 +165,33 @@ impl Parser {
 
     // Conver list of specifiers to a type
     fn parse_type(&mut self, specifier_list: Vec<Token>) -> Result<Type, String> {
-        match specifier_list.as_slice() {
-            [Token::KWInt] => Ok(Type::Int),
-            [Token::KWInt, Token::KWLong]
-            | [Token::KWLong, Token::KWInt]
-            | [Token::KWLong]
-            | [Token::KWLong, Token::KWLong]
-            | [Token::KWLong, Token::KWLong, Token::KWInt] => Ok(Type::Long),
-            _ => Err("Invalid type specifier".to_string()),
+        let mut counts = HashMap::new();
+        let is_valid = specifier_list.iter().all(|s| {
+            let c = counts.entry(s).or_insert(0);
+            *c += 1;
+            if s == &Token::KWLong {
+                *c <= 2
+            } else {
+                *c <= 1
+            }
+        });
+
+        if specifier_list.is_empty()
+            || !is_valid
+            || (specifier_list.contains(&Token::KWSigned)
+                && specifier_list.contains(&Token::KWUnsigned))
+        {
+            Err("Invalid type specifier".to_string())
+        } else if specifier_list.contains(&Token::KWUnsigned)
+            && specifier_list.contains(&Token::KWLong)
+        {
+            Ok(Type::ULong)
+        } else if specifier_list.contains(&Token::KWUnsigned) {
+            Ok(Type::UInt)
+        } else if specifier_list.contains(&Token::KWLong) {
+            Ok(Type::Long)
+        } else {
+            Ok(Type::Int)
         }
     }
 
@@ -194,14 +216,16 @@ impl Parser {
 
     // Constants
 
-    // <const> ::= <int> | <long>
-    // Convert a single token to into constant AST node
-    fn parse_const(&mut self) -> Result<Exp, String> {
-        let (v, is_int) = match self.tokens.take_token()? {
+    // Convert a single constant token to into constant AST node
+    fn parse_signed_const(token: Token) -> Result<Exp, String> {
+        let (v, is_int) = match token {
             Token::ConstInt(i) => (i, true),
             Token::ConstLong(l) => (l, false),
             other => {
-                return Err(format!("Expected a constant, found {:?}", other));
+                return Err(format!(
+                    "Expected a signed integer constant, found {:?}",
+                    other
+                ));
             }
         };
 
@@ -220,6 +244,45 @@ impl Parser {
         }
     }
 
+    fn parse_unsigned_const(token: Token) -> Result<Exp, String> {
+        let (v, is_uint) = match token {
+            Token::ConstUInt(ui) => (ui, true),
+            Token::ConstULong(ul) => (ul, false),
+            other => {
+                return Err(format!(
+                    "Expected an unsigned integer constant, found {:?}",
+                    other
+                ));
+            }
+        };
+
+        let max_ulong = BigInt::from(2u64).pow(64) - 1;
+        if v > max_ulong {
+            return Err(
+                "Constant is too large to represent an unsigned int or unsigned long".to_string(),
+            );
+        }
+
+        let max_uint = BigInt::from(2u32).pow(32) - 1;
+        if is_uint && v <= max_uint {
+            Ok(Exp::Constant(T::ConstUInt(v.to_u32().unwrap())))
+        } else {
+            Ok(Exp::Constant(T::ConstULong(v.to_u64().unwrap())))
+        }
+    }
+
+    // <const> ::= <int> | <long> | <uint> | <ulong>
+
+    /* Just remove the next token from the stream and pass it off to the
+    appropriate helper function to convert it to a const.T */
+    fn parse_const(&mut self) -> Result<Exp, String> {
+        let const_tok = self.tokens.take_token()?;
+        match const_tok {
+            Token::ConstInt(_) | Token::ConstLong(_) => Self::parse_signed_const(const_tok),
+            Token::ConstUInt(_) | Token::ConstULong(_) => Self::parse_unsigned_const(const_tok),
+            other => Err(format!("Expected a constant token, found {:?}", other)),
+        }
+    }
     // Expressions
 
     // <unop> ::= "-" | "~" | "!"
@@ -316,7 +379,10 @@ impl Parser {
         let next_token = self.tokens.peek()?;
         match next_token {
             // constant
-            Token::ConstInt(_) | Token::ConstLong(_) => self.parse_const(),
+            Token::ConstInt(_)
+            | Token::ConstLong(_)
+            | Token::ConstUInt(_)
+            | Token::ConstULong(_) => self.parse_const(),
             // variable or function call
             Token::Identifier(_) => {
                 let id = self.parse_id()?;

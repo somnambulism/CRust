@@ -1,4 +1,6 @@
-use std::collections::{HashMap, hash_map};
+use indexmap::map;
+
+use indexmap::IndexMap;
 
 use crate::library::initializers::StaticInit;
 
@@ -26,13 +28,13 @@ pub struct Entry {
 
 #[derive(Debug)]
 pub struct SymbolTable {
-    table: HashMap<String, Entry>,
+    table: IndexMap<String, Entry>,
 }
 
 impl SymbolTable {
     pub fn new() -> Self {
         SymbolTable {
-            table: HashMap::with_capacity(20),
+            table: IndexMap::with_capacity(20),
         }
     }
 
@@ -108,9 +110,8 @@ impl SymbolTable {
         }
     }
 }
-
 pub struct SymbolTableIter<'a> {
-    iter: hash_map::Iter<'a, String, Entry>,
+    iter: map::Iter<'a, String, Entry>,
 }
 
 impl<'a> Iterator for SymbolTableIter<'a> {
@@ -123,7 +124,7 @@ impl<'a> Iterator for SymbolTableIter<'a> {
 
 impl<'a> IntoIterator for &'a SymbolTable {
     type Item = (&'a String, &'a Entry);
-    type IntoIter = hash_map::Iter<'a, String, Entry>;
+    type IntoIter = map::Iter<'a, String, Entry>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.table.iter()

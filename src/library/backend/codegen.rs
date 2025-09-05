@@ -6,7 +6,7 @@ use crate::library::{
         TopLevel as AssemblyTopLevel, UnaryOperator,
     },
     backend::assembly_symbols::SymbolTable as BackendSymbolTable,
-    r#const::T,
+    r#const::{T, type_of_const},
     symbols::{Entry, IdentifierAttrs, SymbolTable},
     tacky::{
         BinaryOperator as TackyBinaryOp, Instruction as TackyInstruction, Program, TackyVal,
@@ -27,14 +27,16 @@ fn convert_val(val: &TackyVal) -> Operand {
     match val {
         TackyVal::Constant(T::ConstInt(i)) => Operand::Imm(*i as i64),
         TackyVal::Constant(T::ConstLong(l)) => Operand::Imm(*l),
+        TackyVal::Constant(T::ConstUInt(u)) => Operand::Imm(*u as i64),
+        TackyVal::Constant(T::ConstULong(ul)) => Operand::Imm(*ul as i64),
         TackyVal::Var(v) => Operand::Pseudo(v.to_string()),
     }
 }
 
 fn convert_type(t: &Type) -> AsmType {
     match t {
-        Type::Int => AsmType::Longword,
-        Type::Long => AsmType::Quadword,
+        Type::Int | Type::UInt => AsmType::Longword,
+        Type::Long | Type::ULong => AsmType::Quadword,
         Type::FunType { .. } => panic!("Internal error, converting function type to assembly"),
     }
 }
@@ -72,14 +74,38 @@ fn convert_binop(op: &TackyBinaryOp) -> BinaryOperator {
     }
 }
 
-fn convert_cond_code(cond_code: &TackyBinaryOp) -> CondCode {
+fn convert_cond_code(signed: bool, cond_code: &TackyBinaryOp) -> CondCode {
     match cond_code {
         TackyBinaryOp::Equal => CondCode::E,
         TackyBinaryOp::NotEqual => CondCode::NE,
-        TackyBinaryOp::GreaterThan => CondCode::G,
-        TackyBinaryOp::GreaterOrEqual => CondCode::GE,
-        TackyBinaryOp::LessThan => CondCode::L,
-        TackyBinaryOp::LessOrEqual => CondCode::LE,
+        TackyBinaryOp::GreaterThan => {
+            if signed {
+                CondCode::G
+            } else {
+                CondCode::A
+            }
+        }
+        TackyBinaryOp::GreaterOrEqual => {
+            if signed {
+                CondCode::GE
+            } else {
+                CondCode::AE
+            }
+        }
+        TackyBinaryOp::LessThan => {
+            if signed {
+                CondCode::L
+            } else {
+                CondCode::B
+            }
+        }
+        TackyBinaryOp::LessOrEqual => {
+            if signed {
+                CondCode::LE
+            } else {
+                CondCode::BE
+            }
+        }
         _ => panic!("Internal error: not a condition code"),
     }
 }
@@ -92,12 +118,15 @@ impl CodeGen {
         }
     }
 
-    fn asm_type(&self, val: &TackyVal) -> AsmType {
-        match val {
-            TackyVal::Constant(T::ConstLong(_)) => AsmType::Quadword,
-            TackyVal::Constant(T::ConstInt(_)) => AsmType::Longword,
-            TackyVal::Var(v) => convert_type(&self.symbol_table.get(v).t),
+    fn tacky_type(&self, tacky_val: &TackyVal) -> Type {
+        match tacky_val {
+            TackyVal::Constant(c) => type_of_const(c),
+            TackyVal::Var(v) => self.symbol_table.get(v).t.clone(),
         }
+    }
+
+    fn asm_type(&self, v: &TackyVal) -> AsmType {
+        convert_type(&self.tacky_type(v))
     }
 
     fn convert_function_call(
@@ -244,7 +273,8 @@ impl CodeGen {
                     | TackyBinaryOp::GreaterOrEqual
                     | TackyBinaryOp::LessThan
                     | TackyBinaryOp::LessOrEqual => {
-                        let cond_code = convert_cond_code(&op);
+                        let signed = self.tacky_type(src1).is_signed();
+                        let cond_code = convert_cond_code(signed, &op);
                         vec![
                             Instruction::Cmp(src_t, asm_src2, asm_src1),
                             Instruction::Mov(dst_t, ZERO, asm_dst.clone()),
@@ -258,12 +288,21 @@ impl CodeGen {
                         } else {
                             Reg::DX
                         };
-                        vec![
-                            Instruction::Mov(src_t.clone(), asm_src1, Operand::Reg(Reg::AX)),
-                            Instruction::Cdq(src_t.clone()),
-                            Instruction::Idiv(self.asm_type(src2).clone(), asm_src2),
-                            Instruction::Mov(src_t, Operand::Reg(result_reg), asm_dst),
-                        ]
+                        if self.tacky_type(src1).is_signed() {
+                            vec![
+                                Instruction::Mov(src_t.clone(), asm_src1, Operand::Reg(Reg::AX)),
+                                Instruction::Cdq(src_t.clone()),
+                                Instruction::Idiv(self.asm_type(src2).clone(), asm_src2),
+                                Instruction::Mov(src_t, Operand::Reg(result_reg), asm_dst),
+                            ]
+                        } else {
+                            vec![
+                                Instruction::Mov(src_t.clone(), asm_src1, Operand::Reg(Reg::AX)),
+                                Instruction::Mov(src_t.clone(), ZERO, Operand::Reg(Reg::DX)),
+                                Instruction::Div(self.asm_type(src2).clone(), asm_src2),
+                                Instruction::Mov(src_t, Operand::Reg(result_reg), asm_dst),
+                            ]
+                        }
                     }
                     // Bitwise shift
                     TackyBinaryOp::LeftShift | TackyBinaryOp::RightShift => {
@@ -322,6 +361,11 @@ impl CodeGen {
                 let asm_src = convert_val(src);
                 let asm_dst = convert_val(dst);
                 vec![Instruction::Mov(AsmType::Longword, asm_src, asm_dst)]
+            }
+            TackyInstruction::ZeroExtend { src, dst } => {
+                let asm_src = convert_val(src);
+                let asm_dst = convert_val(dst);
+                vec![Instruction::MovZeroExtend(asm_src, asm_dst)]
             }
         }
     }

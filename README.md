@@ -95,3 +95,4 @@ the source code into C...
 - Functions
 - Support for `static` and `extern` keywords.
 - Long type
+- Unsigned integers

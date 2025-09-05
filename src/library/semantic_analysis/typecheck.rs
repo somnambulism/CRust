@@ -12,7 +12,7 @@ use crate::library::{
         typed_exp::{InnerExp, TypedExp},
         untyped_exp::Exp,
     },
-    r#const::T,
+    r#const::{T, type_of_const},
     const_convert::const_convert,
     initializers::{StaticInit, zero},
     symbols::{Entry, IdentifierAttrs, InitialValue, SymbolTable},
@@ -28,7 +28,19 @@ fn convert_to(e: TypedExp, target_type: Type) -> TypedExp {
 }
 
 fn get_common_type(t1: &Type, t2: &Type) -> Type {
-    if t1 == t2 { t1.clone() } else { Type::Long }
+    if t1 == t2 {
+        t1.clone()
+    } else if t1.get_size() == t2.get_size() {
+        if t1.is_signed() {
+            t2.clone()
+        } else {
+            t1.clone()
+        }
+    } else if t1.get_size() > t2.get_size() {
+        t1.clone()
+    } else {
+        t2.clone()
+    }
 }
 
 pub struct TypeChecker {
@@ -49,16 +61,13 @@ impl TypeChecker {
             Type::FunType { .. } => {
                 panic!("Tried to use function name {} as variable", v);
             }
-            Type::Int | Type::Long => TypedExp::set_type(e, v_type),
+            _ => TypedExp::set_type(e, v_type),
         }
     }
 
     fn typecheck_const(&self, c: &T) -> TypedExp {
         let e = InnerExp::Constant(c.clone());
-        match c {
-            T::ConstInt(_) => TypedExp::set_type(e, Type::Int),
-            T::ConstLong(_) => TypedExp::set_type(e, Type::Long),
-        }
+        TypedExp::set_type(e, type_of_const(c))
     }
 
     fn typecheck_exp(&self, exp: &Exp) -> TypedExp {
@@ -204,9 +213,6 @@ impl TypeChecker {
         let f_type = self.symbol_table.get(f).t.clone();
 
         match f_type {
-            Type::Int | Type::Long => {
-                panic!("Tried to use variable {} as function name", f);
-            }
             Type::FunType {
                 param_types,
                 ret_type,
@@ -226,6 +232,9 @@ impl TypeChecker {
                 };
                 TypedExp::set_type(call_exp, *ret_type)
             }
+            _ => {
+                panic!("Tried to use variable {} as function name", f);
+            }
         }
     }
 
@@ -237,6 +246,8 @@ impl TypeChecker {
                 let init_val = match const_convert(var_type, &c) {
                     T::ConstInt(i) => StaticInit::IntInit(i),
                     T::ConstLong(l) => StaticInit::LongInit(l),
+                    T::ConstUInt(u) => StaticInit::UIntInit(u),
+                    T::ConstULong(ul) => StaticInit::ULongInit(ul),
                 };
                 InitialValue::Initial(init_val)
             }

@@ -47,6 +47,10 @@ pub enum CondCode {
     GE,
     L,
     LE,
+    A,
+    AE,
+    B,
+    BE,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +63,7 @@ pub enum AsmType {
 pub enum Instruction {
     Mov(AsmType, Operand, Operand),
     Movsx(Operand, Operand),
+    MovZeroExtend(Operand, Operand),
     Unary(UnaryOperator, AsmType, Operand),
     Binary {
         op: BinaryOperator,
@@ -68,6 +73,7 @@ pub enum Instruction {
     },
     Cmp(AsmType, Operand, Operand),
     Idiv(AsmType, Operand),
+    Div(AsmType, Operand),
     Cdq(AsmType),
     Jmp(String),
     JmpCC(CondCode, String),

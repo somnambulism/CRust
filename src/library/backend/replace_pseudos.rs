@@ -64,6 +64,11 @@ impl ReplacementState {
                 let new_dst = self.replace_operand(dst, symbols);
                 Instruction::Movsx(new_src, new_dst)
             }
+            Instruction::MovZeroExtend(src, dst) => {
+                let new_src = self.replace_operand(src, symbols);
+                let new_dst = self.replace_operand(dst, symbols);
+                Instruction::MovZeroExtend(new_src, new_dst)
+            }
             Instruction::Unary(t, op, dst) => {
                 let new_dst = self.replace_operand(dst, symbols);
                 Instruction::Unary(t.clone(), op.clone(), new_dst)
@@ -86,6 +91,10 @@ impl ReplacementState {
             Instruction::Idiv(t, op) => {
                 let new_op = self.replace_operand(op, symbols);
                 Instruction::Idiv(t.clone(), new_op)
+            }
+            Instruction::Div(t, op) => {
+                let new_op = self.replace_operand(op, symbols);
+                Instruction::Div(t.clone(), new_op)
             }
             Instruction::SetCC(code, op) => {
                 let new_op = self.replace_operand(op, symbols);

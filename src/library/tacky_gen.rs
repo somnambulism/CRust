@@ -170,23 +170,35 @@ impl TackyGen {
         inner: TypedExp,
     ) -> (Vec<Instruction>, TackyVal) {
         let (mut eval_inner, result) = self.emit_tacky_for_exp(inner.clone());
+        let inner_type = inner.get_type();
 
-        if inner.get_type() == target_type {
+        if inner_type == target_type {
             (eval_inner, result)
         } else {
             let dst_name = self.create_tmp(target_type.clone());
             let dst = TackyVal::Var(dst_name);
-            let cast_instruction = match target_type {
-                Type::Long => Instruction::SignExtend {
+            let cast_instruction = if target_type.get_size() == inner_type.get_size() {
+                Instruction::Copy {
                     src: result,
                     dst: dst.clone(),
-                },
-                Type::Int => Instruction::Truncate {
+                }
+            } else if target_type.get_size() < inner_type.get_size() {
+                Instruction::Truncate {
                     src: result,
                     dst: dst.clone(),
-                },
-                _ => panic!("Internal error: cast to function type"),
+                }
+            } else if inner_type.is_signed() {
+                Instruction::SignExtend {
+                    src: result,
+                    dst: dst.clone(),
+                }
+            } else {
+                Instruction::ZeroExtend {
+                    src: result,
+                    dst: dst.clone(),
+                }
             };
+
             eval_inner.push(cast_instruction);
             (eval_inner, dst)
         }
@@ -319,6 +331,8 @@ impl TackyGen {
             let one = match t {
                 Type::Int => TackyVal::Constant(INT_ONE),
                 Type::Long => TackyVal::Constant(T::ConstLong(1)),
+                Type::UInt => TackyVal::Constant(T::ConstUInt(1)),
+                Type::ULong => TackyVal::Constant(T::ConstULong(1)),
                 _ => panic!("Internal error: ++/-- can only be applied to variables"),
             };
 

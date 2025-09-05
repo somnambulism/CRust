@@ -40,6 +40,10 @@ pub enum Instruction {
         src: TackyVal,
         dst: TackyVal,
     },
+    ZeroExtend {
+        src: TackyVal,
+        dst: TackyVal,
+    },
     Truncate {
         src: TackyVal,
         dst: TackyVal,

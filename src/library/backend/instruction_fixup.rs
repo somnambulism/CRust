@@ -79,10 +79,24 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
                 Instruction::Mov(AsmType::Quadword, Operand::Reg(Reg::R11), dst),
             ]
         }
+        // Rewrite MovZeroExtend as one or two Mov instructions
+        Instruction::MovZeroExtend(src, dst) => match dst {
+            Operand::Reg(_) => vec![Instruction::Mov(AsmType::Longword, src, dst)],
+            _ => {
+                vec![
+                    Instruction::Mov(AsmType::Longword, src, Operand::Reg(Reg::R11)),
+                    Instruction::Mov(AsmType::Quadword, Operand::Reg(Reg::R11), dst),
+                ]
+            }
+        },
         // Idiv can't operate on constants
         Instruction::Idiv(t, Operand::Imm(i)) => vec![
             Instruction::Mov(t.clone(), Operand::Imm(i), Operand::Reg(Reg::R10)),
             Instruction::Idiv(t, Operand::Reg(Reg::R10)),
+        ],
+        Instruction::Div(t, Operand::Imm(i)) => vec![
+            Instruction::Mov(t.clone(), Operand::Imm(i), Operand::Reg(Reg::R10)),
+            Instruction::Div(t, Operand::Reg(Reg::R10)),
         ],
         // Add/Sub/And/Or/Xor can't use take large immediates as source operands
         Instruction::Binary {

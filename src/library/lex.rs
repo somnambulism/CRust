@@ -38,6 +38,14 @@ impl Lexer {
                 re: Regex::new(r"^[0-9]+[lL]\b").unwrap(),
                 converter: Lexer::convert_long,
             },
+            TokenDef {
+                re: Regex::new(r"^[0-9]+[uU]\b").unwrap(),
+                converter: Lexer::convert_uint,
+            },
+            TokenDef {
+                re: Regex::new(r"^[0-9]+([lL][uU]|[uU][lL])\b").unwrap(),
+                converter: Lexer::convert_ulong,
+            },
             // punctuation
             TokenDef {
                 re: Regex::new(r"^\(").unwrap(),
@@ -258,6 +266,8 @@ impl Lexer {
             "static" => Token::KWStatic,
             "extern" => Token::KWExtern,
             "long" => Token::KWLong,
+            "unsigned" => Token::KWUnsigned,
+            "signed" => Token::KWSigned,
             "goto" => Token::KWGoto,
             "switch" => Token::KWSwitch,
             "case" => Token::KWCase,
@@ -274,6 +284,18 @@ impl Lexer {
         // drop "l" suffix
         let const_str = string_util::chop_suffix(s, 1);
         Token::ConstLong(BigInt::from_str(const_str).unwrap())
+    }
+
+    fn convert_uint(s: &str) -> Token {
+        // drop "u" suffix
+        let const_str = string_util::chop_suffix(s, 1);
+        Token::ConstUInt(BigInt::from_str(const_str).unwrap())
+    }
+
+    fn convert_ulong(s: &str) -> Token {
+        // remove ul/lu suffix
+        let const_str = string_util::chop_suffix(s, 2);
+        Token::ConstULong(BigInt::from_str(const_str).unwrap())
     }
 }
 
