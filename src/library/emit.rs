@@ -80,6 +80,8 @@ fn show_binary_instruction(operator: &BinaryOperator) -> String {
         BinaryOperator::Xor => "xor".to_string(),
         BinaryOperator::Sal => "sal".to_string(),
         BinaryOperator::Sar => "sar".to_string(),
+        BinaryOperator::Shl => "shl".to_string(),
+        BinaryOperator::Shr => "shr".to_string(),
     }
 }
 

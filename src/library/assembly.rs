@@ -37,6 +37,8 @@ pub enum BinaryOperator {
     Xor,
     Sal,
     Sar,
+    Shl,
+    Shr,
 }
 
 #[derive(Clone, Debug)]

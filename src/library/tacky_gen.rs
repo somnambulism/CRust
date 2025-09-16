@@ -664,6 +664,8 @@ impl TackyGen {
                 let src2 = match condition.get_type() {
                     Type::Int => TackyVal::Constant(T::ConstInt(*value as i32)),
                     Type::Long => TackyVal::Constant(T::ConstLong(*value)),
+                    Type::UInt => TackyVal::Constant(T::ConstUInt(*value as u32)),
+                    Type::ULong => TackyVal::Constant(T::ConstULong(*value as u64)),
                     _ => panic!("switch condition should be int or long"),
                 };
                 instructions.push(Instruction::Binary {

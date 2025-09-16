@@ -194,7 +194,11 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         ],
         // Sal/Sar can't use memory addresses for both operands
         Instruction::Binary {
-            op: op @ BinaryOperator::Sal | op @ BinaryOperator::Sar,
+            op:
+                op @ BinaryOperator::Sal
+                | op @ BinaryOperator::Sar
+                | op @ BinaryOperator::Shl
+                | op @ BinaryOperator::Shr,
             t,
             src,
             dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),

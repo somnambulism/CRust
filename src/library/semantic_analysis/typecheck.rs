@@ -313,8 +313,8 @@ impl TypeChecker {
                     if let Some(value) = case {
                         // Convert value to type of the switch expression
                         let converted_value = match switch_type {
-                            Type::Int => (*value).rem(0x100000000) as i64, // 2^32
-                            Type::Long => *value,
+                            Type::Int | Type::UInt => (*value).rem(0x100000000) as i64, // 2^32
+                            Type::Long | Type::ULong => *value,
                             _ => panic!("Switch condition must be integer type"),
                         };
 

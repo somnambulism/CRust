@@ -711,7 +711,10 @@ impl Parser {
             Ok(Token::KWCase) => {
                 self.tokens.take_token()?;
                 let condition = match self.tokens.take_token()? {
-                    Token::ConstInt(c) | Token::ConstLong(c) => c.to_i64().unwrap(),
+                    Token::ConstInt(c)
+                    | Token::ConstLong(c)
+                    | Token::ConstUInt(c)
+                    | Token::ConstULong(c) => c.to_i64().unwrap(),
                     other => {
                         return Err(format!("Expected a constant, found {:?}", other));
                     }

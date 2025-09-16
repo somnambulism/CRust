@@ -288,33 +288,68 @@ impl CodeGen {
                         } else {
                             Reg::DX
                         };
-                        if self.tacky_type(src1).is_signed() {
+                        if self.tacky_type(src1).is_signed() || self.tacky_type(src2).is_signed() {
                             vec![
                                 Instruction::Mov(src_t.clone(), asm_src1, Operand::Reg(Reg::AX)),
-                                Instruction::Cdq(src_t.clone()),
+                                Instruction::Cdq(self.asm_type(src2).clone()),
                                 Instruction::Idiv(self.asm_type(src2).clone(), asm_src2),
-                                Instruction::Mov(src_t, Operand::Reg(result_reg), asm_dst),
+                                Instruction::Mov(dst_t, Operand::Reg(result_reg), asm_dst),
                             ]
                         } else {
                             vec![
                                 Instruction::Mov(src_t.clone(), asm_src1, Operand::Reg(Reg::AX)),
                                 Instruction::Mov(src_t.clone(), ZERO, Operand::Reg(Reg::DX)),
                                 Instruction::Div(self.asm_type(src2).clone(), asm_src2),
-                                Instruction::Mov(src_t, Operand::Reg(result_reg), asm_dst),
+                                Instruction::Mov(dst_t, Operand::Reg(result_reg), asm_dst),
                             ]
                         }
                     }
                     // Bitwise shift
-                    TackyBinaryOp::LeftShift | TackyBinaryOp::RightShift => {
-                        vec![
-                            Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
-                            Instruction::Binary {
-                                op: convert_binop(&op),
-                                t: src_t,
-                                src: asm_src2,
-                                dst: asm_dst,
-                            },
-                        ]
+                    TackyBinaryOp::LeftShift => {
+                        if self.tacky_type(src1).is_signed() {
+                            vec![
+                                Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
+                                Instruction::Binary {
+                                    op: BinaryOperator::Sal,
+                                    t: src_t,
+                                    src: asm_src2,
+                                    dst: asm_dst,
+                                },
+                            ]
+                        } else {
+                            vec![
+                                Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
+                                Instruction::Binary {
+                                    op: BinaryOperator::Shl,
+                                    t: src_t,
+                                    src: asm_src2,
+                                    dst: asm_dst,
+                                },
+                            ]
+                        }
+                    }
+                    TackyBinaryOp::RightShift => {
+                        if self.tacky_type(src1).is_signed() {
+                            vec![
+                                Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
+                                Instruction::Binary {
+                                    op: BinaryOperator::Sar,
+                                    t: src_t,
+                                    src: asm_src2,
+                                    dst: asm_dst,
+                                },
+                            ]
+                        } else {
+                            vec![
+                                Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
+                                Instruction::Binary {
+                                    op: BinaryOperator::Shr,
+                                    t: src_t,
+                                    src: asm_src2,
+                                    dst: asm_dst,
+                                },
+                            ]
+                        }
                     }
                     // Addition/subtraction/multiplication
                     _ => {
