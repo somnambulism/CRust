@@ -858,7 +858,40 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use clap::parser;
+    use num_traits::FromPrimitive;
+
     use super::*;
+
+    #[test]
+    fn signed_long_constant() {
+        let tok_list = vec![Token::ConstLong(
+            BigInt::from_i64(4611686018427387904).unwrap(),
+        )];
+        let mut parser = Parser::new(tok_list);
+        let c = parser.parse_const().unwrap();
+        assert_eq!(c, Exp::Constant(T::ConstLong(4611686018427387904)));
+    }
+
+    #[test]
+    fn unsigned_int_constant() {
+        let tok_list = vec![Token::ConstUInt(BigInt::from_str("4294967291").unwrap())];
+        let mut parser = Parser::new(tok_list);
+        let c = parser.parse_const().unwrap();
+        assert_eq!(c, Exp::Constant(T::ConstUInt(4294967291)));
+    }
+
+    #[test]
+    fn unsigned_long_constant() {
+        let tok_list = vec![Token::ConstULong(
+            BigInt::from_str("18446744073709551611").unwrap(),
+        )];
+        let mut parser = Parser::new(tok_list);
+        let c = parser.parse_const().unwrap();
+        assert_eq!(c, Exp::Constant(T::ConstULong(18446744073709551611)));
+    }
 
     #[test]
     fn expression() {
