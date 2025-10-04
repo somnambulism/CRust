@@ -21,6 +21,7 @@ fn suffix(t: &AsmType) -> String {
     match t {
         AsmType::Longword => "l".to_string(),
         AsmType::Quadword => "q".to_string(),
+        AsmType::Double => "sd".to_string(),
     }
 }
 
@@ -34,6 +35,10 @@ fn show_long_reg(reg: &Reg) -> String {
         Reg::R10 => "%r10d".to_string(),
         Reg::R11 => "%r11d".to_string(),
         Reg::SP => panic!("Internal error: no 32-bit RSP"),
+        _ => panic!(
+            "Internal error: can't store longword type in XMM register {:?}",
+            reg
+        ),
     }
 }
 
@@ -47,6 +52,26 @@ fn show_quadword_reg(reg: &Reg) -> String {
         Reg::R10 => "%r10".to_string(),
         Reg::R11 => "%r11".to_string(),
         Reg::SP => "%rsp".to_string(),
+        _ => panic!(
+            "Internal error: can't store quadword type in XMM register {:?}",
+            reg
+        ),
+    }
+}
+
+fn show_double_reg(reg: &Reg) -> String {
+    match reg {
+        Reg::XMM0 => "%xmm0".to_string(),
+        Reg::XMM1 => "%xmm1".to_string(),
+        Reg::XMM2 => "%xmm2".to_string(),
+        Reg::XMM3 => "%xmm3".to_string(),
+        Reg::XMM7 => "%xmm7".to_string(),
+        Reg::XMM14 => "%xmm14".to_string(),
+        Reg::XMM15 => "%xmm15".to_string(),
+        _ => panic!(
+            "Internal error: can't store double type in general-purpose register {:?}",
+            reg
+        ),
     }
 }
 
@@ -60,6 +85,10 @@ fn show_byte_reg(reg: &Reg) -> String {
         Reg::R10 => "%r10b".to_string(),
         Reg::R11 => "%r11b".to_string(),
         Reg::SP => panic!("Internal error: no one-byte RSP"),
+        _ => panic!(
+            "Internal error: can't store byte type in XMM register {:?}",
+            reg
+        ),
     }
 }
 
@@ -67,6 +96,7 @@ fn show_unary_instruction(operator: &UnaryOperator) -> String {
     match operator {
         UnaryOperator::Neg => "neg".to_string(),
         UnaryOperator::Not => "not".to_string(),
+        UnaryOperator::Shr => "shr".to_string(),
     }
 }
 
@@ -75,6 +105,7 @@ fn show_binary_instruction(operator: &BinaryOperator) -> String {
         BinaryOperator::Add => "add".to_string(),
         BinaryOperator::Sub => "sub".to_string(),
         BinaryOperator::Mult => "imul".to_string(),
+        BinaryOperator::DivDouble => "div".to_string(),
         BinaryOperator::And => "and".to_string(),
         BinaryOperator::Or => "or".to_string(),
         BinaryOperator::Xor => "xor".to_string(),
@@ -151,10 +182,18 @@ impl CodeEmitter {
             Operand::Reg(r) => match t {
                 AsmType::Longword => show_long_reg(r),
                 AsmType::Quadword => show_quadword_reg(r),
+                AsmType::Double => show_double_reg(r),
             },
             Operand::Imm(i) => format!("${}", i),
             Operand::Stack(i) => format!("{}(%rbp)", i),
-            Operand::Data(name) => format!("{}(%rip)", self.show_label(name)),
+            Operand::Data(name) => {
+                let lbl = if self.symbols.is_constant(name) {
+                    self.show_local_label(name)
+                } else {
+                    self.show_label(name)
+                };
+                format!("{}(%rip)", lbl)
+            }
             // printing out pseudoregister is only for debugging
             Operand::Pseudo(name) => format!("%{}", name),
         }
@@ -184,6 +223,32 @@ impl CodeEmitter {
                 self.show_operand(t, dst)
             ),
             Instruction::Binary {
+                op: BinaryOperator::Xor,
+                t: AsmType::Double,
+                src,
+                dst,
+            } => {
+                writeln!(
+                    self.file,
+                    "\txorpd {}, {}",
+                    self.show_operand(&AsmType::Double, src),
+                    self.show_operand(&AsmType::Double, dst)
+                )
+            }
+            Instruction::Binary {
+                op: BinaryOperator::Mult,
+                t: AsmType::Double,
+                src,
+                dst,
+            } => {
+                writeln!(
+                    self.file,
+                    "\tmulsd {}, {}",
+                    self.show_operand(&AsmType::Double, src),
+                    self.show_operand(&AsmType::Double, dst)
+                )
+            }
+            Instruction::Binary {
                 op: op @ BinaryOperator::Sal | op @ BinaryOperator::Sar,
                 t,
                 src,
@@ -203,6 +268,12 @@ impl CodeEmitter {
                 suffix(t),
                 self.show_operand(t, src),
                 self.show_operand(t, dst)
+            ),
+            Instruction::Cmp(AsmType::Double, src, dst) => writeln!(
+                self.file,
+                "\tcomisd {}, {}",
+                self.show_operand(&AsmType::Double, src),
+                self.show_operand(&AsmType::Double, dst)
             ),
             Instruction::Cmp(t, src, dst) => writeln!(
                 self.file,
@@ -261,7 +332,24 @@ impl CodeEmitter {
                     self.show_operand(&AsmType::Quadword, dst)
                 )
             }
+            Instruction::Cvtsi2sd(t, src, dst) => writeln!(
+                self.file,
+                "\tcvtsi2sd{} {}, {}",
+                suffix(t),
+                self.show_operand(t, src),
+                self.show_operand(&AsmType::Double, dst)
+            ),
+            Instruction::Cvttsd2si(t, src, dst) => writeln!(
+                self.file,
+                "\tcvttsd2si{} {}, {}",
+                suffix(t),
+                self.show_operand(&AsmType::Double, src),
+                self.show_operand(t, dst)
+            ),
             Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
+            Instruction::Cdq(AsmType::Double) => {
+                panic!("Intenral error: can't apply cdq to double type")
+            }
             Instruction::MovZeroExtend(..) => {
                 panic!(
                     "Internal error: MovZeroExtend should have been removed in instruction rewrite pass"
@@ -282,6 +370,9 @@ impl CodeEmitter {
         match init {
             StaticInit::IntInit(_) | StaticInit::UIntInit(_) => writeln!(self.file, "\t.zero 4"),
             StaticInit::LongInit(_) | StaticInit::ULongInit(_) => writeln!(self.file, "\t.zero 8"),
+            StaticInit::DoubleInit(_) => {
+                panic!("Internal error: should never use zeroinit for doubles")
+            }
         }
     }
 
@@ -291,7 +382,37 @@ impl CodeEmitter {
             StaticInit::LongInit(l) => writeln!(self.file, "\t.quad {}", l),
             StaticInit::UIntInit(u) => writeln!(self.file, "\t.long {}", u),
             StaticInit::ULongInit(l) => writeln!(self.file, "\t.quad {}", l),
+            StaticInit::DoubleInit(d) => writeln!(self.file, "\t.quad {}", d.to_bits()),
         }
+    }
+
+    fn emit_constant(&mut self, name: &str, alignment: i8, init: &StaticInit) -> Result<()> {
+        let constant_section_name = match self.platform {
+            Target::Linux => ".section .rodata",
+            Target::OsX => {
+                if alignment == 8 {
+                    ".literal 8"
+                } else if alignment == 16 {
+                    ".literal 16"
+                } else {
+                    panic!(
+                        "Internal error: found constant with bad alignment {} {}",
+                        name, alignment
+                    )
+                }
+            }
+            Target::Windows => ".section .rdata",
+        };
+        writeln!(self.file, "\t{}", constant_section_name)?;
+        writeln!(self.file, "\t{} {}", self.align_directive(), alignment)?;
+        writeln!(self.file, "{}:", self.show_local_label(name))?;
+        self.emit_init(init)?;
+        // macOS linker gets cranky if you write only 8 bytes to .literal16 section
+        // CRust supports only Windows, but who knows
+        if constant_section_name == ".literal16" {
+            self.emit_init(&StaticInit::LongInit(0))?;
+        }
+        Ok(())
     }
 
     fn emit_tl(&mut self, tl: &TopLevel) -> Result<()> {
@@ -319,7 +440,9 @@ impl CodeEmitter {
                 global,
                 init,
                 alignment,
-            } if init.is_zero() => {
+            } 
+            // is_zero is false for all doubles
+            if init.is_zero() => {
                 let label = self.show_label(&name);
                 self.emit_global_directive(*global, &label)?;
                 writeln!(self.file, "\t.bss")?;
@@ -344,6 +467,7 @@ impl CodeEmitter {
                 writeln!(self.file)?;
                 Ok(())
             }
+            TopLevel::StaticConstant { name, alignment, init } => self.emit_constant(name, *alignment, init)
         }
     }
 

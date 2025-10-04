@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    mem::{Discriminant, discriminant},
+};
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -57,7 +60,7 @@ fn get_precedence(token: &Token) -> Option<i8> {
 fn is_type_specifier(token: &Token) -> bool {
     matches!(
         token,
-        Token::KWInt | Token::KWLong | Token::KWSigned | Token::KWUnsigned
+        Token::KWInt | Token::KWLong | Token::KWSigned | Token::KWUnsigned | Token::KWDouble
     )
 }
 
@@ -165,30 +168,53 @@ impl Parser {
 
     // Conver list of specifiers to a type
     fn parse_type(&mut self, specifier_list: Vec<Token>) -> Result<Type, String> {
-        let mut counts = HashMap::new();
-        let is_valid = specifier_list.iter().all(|s| {
-            let c = counts.entry(s).or_insert(0);
-            *c += 1;
-            if s == &Token::KWLong {
-                *c <= 2
-            } else {
-                *c <= 1
-            }
-        });
+        if specifier_list.len() == 1 && matches!(&specifier_list[0], Token::KWDouble) {
+            return Ok(Type::Double);
+        }
 
-        if specifier_list.is_empty()
-            || !is_valid
-            || (specifier_list.contains(&Token::KWSigned)
-                && specifier_list.contains(&Token::KWUnsigned))
+        if specifier_list.is_empty() {
+            return Err("Invalid type specifier".to_string());
+        }
+
+        let mut counts: HashMap<Discriminant<Token>, usize> = HashMap::new();
+        for tok in specifier_list {
+            let d = discriminant(&tok);
+            *counts.entry(d).or_insert(0) += 1;
+        }
+
+        let double_disc = discriminant(&Token::KWDouble);
+        if counts.get(&double_disc).copied().unwrap_or(0) > 0 {
+            return Err("Invalid type specifier".to_string());
+        }
+
+        let signed_disc = discriminant(&Token::KWSigned);
+        let unsigned_disc = discriminant(&Token::KWUnsigned);
+        let long_disc = discriminant(&Token::KWLong);
+
+        if counts.get(&signed_disc).copied().unwrap_or(0) > 0
+            && counts.get(&unsigned_disc).copied().unwrap_or(0) > 0
         {
-            Err("Invalid type specifier".to_string())
-        } else if specifier_list.contains(&Token::KWUnsigned)
-            && specifier_list.contains(&Token::KWLong)
-        {
+            return Err("Invalid type specifier".to_string());
+        }
+
+        for (&disc, &cnt) in counts.iter() {
+            if disc == long_disc {
+                if cnt > 2 {
+                    return Err("Invalid type specifier".to_string());
+                }
+            } else if cnt > 1 {
+                return Err("Invalid type specifier".to_string());
+            }
+        }
+
+        let unsigned = counts.get(&unsigned_disc).copied().unwrap_or(0) > 0;
+        let long = counts.get(&long_disc).copied().unwrap_or(0) > 0;
+
+        if unsigned && long {
             Ok(Type::ULong)
-        } else if specifier_list.contains(&Token::KWUnsigned) {
+        } else if unsigned {
             Ok(Type::UInt)
-        } else if specifier_list.contains(&Token::KWLong) {
+        } else if long {
             Ok(Type::Long)
         } else {
             Ok(Type::Int)
@@ -280,6 +306,7 @@ impl Parser {
         match const_tok {
             Token::ConstInt(_) | Token::ConstLong(_) => Self::parse_signed_const(const_tok),
             Token::ConstUInt(_) | Token::ConstULong(_) => Self::parse_unsigned_const(const_tok),
+            Token::ConstDouble(d) => Ok(Exp::Constant(T::ConstDouble(d))),
             other => Err(format!("Expected a constant token, found {:?}", other)),
         }
     }
@@ -382,7 +409,8 @@ impl Parser {
             Token::ConstInt(_)
             | Token::ConstLong(_)
             | Token::ConstUInt(_)
-            | Token::ConstULong(_) => self.parse_const(),
+            | Token::ConstULong(_)
+            | Token::ConstDouble(_) => self.parse_const(),
             // variable or function call
             Token::Identifier(_) => {
                 let id = self.parse_id()?;
@@ -858,10 +886,8 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use clap::parser;
     use num_traits::FromPrimitive;
+    use std::str::FromStr;
 
     use super::*;
 

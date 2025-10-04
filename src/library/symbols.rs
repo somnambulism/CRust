@@ -104,12 +104,13 @@ impl SymbolTable {
             .collect()
     }
 
-    pub fn iter(&self) -> SymbolTableIter {
+    pub fn iter(&self) -> SymbolTableIter<'_> {
         SymbolTableIter {
             iter: self.table.iter(),
         }
     }
 }
+
 pub struct SymbolTableIter<'a> {
     iter: map::Iter<'a, String, Entry>,
 }

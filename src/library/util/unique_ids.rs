@@ -12,4 +12,4 @@ pub fn make_label(prefix: &str) -> String {
     format!("{}.{}", prefix, n)
 }
 
-pub static make_named_temporary: fn(&str) -> String = make_label;
+pub static MAKE_NAMED_TEMPORARY: fn(&str) -> String = make_label;

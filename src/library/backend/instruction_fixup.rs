@@ -20,6 +20,14 @@ fn is_larger_than_uint(imm: i64) -> bool {
     imm > max_i || imm < INT32_MIN
 }
 
+fn is_constant(operand: &Operand) -> bool {
+    matches!(operand, Operand::Imm(_))
+}
+
+fn is_memory(operand: &Operand) -> bool {
+    matches!(operand, Operand::Stack(_) | Operand::Data(_))
+}
+
 fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
     match instruction {
         // Mov can't move a value from one memory address to another
@@ -28,9 +36,14 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
             src @ Operand::Stack(_) | src @ Operand::Data(_),
             dst @ Operand::Stack(_) | dst @ Operand::Data(_),
         ) => {
+            let scratch = if t == AsmType::Double {
+                Operand::Reg(Reg::XMM14)
+            } else {
+                Operand::Reg(Reg::R10)
+            };
             vec![
-                Instruction::Mov(t.clone(), src, Operand::Reg(Reg::R10)),
-                Instruction::Mov(t, Operand::Reg(Reg::R10), dst),
+                Instruction::Mov(t.clone(), src, scratch.clone()),
+                Instruction::Mov(t, scratch, dst),
             ]
         }
         // Mov can't move a large constant to a memory address
@@ -97,6 +110,27 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         Instruction::Div(t, Operand::Imm(i)) => vec![
             Instruction::Mov(t.clone(), Operand::Imm(i), Operand::Reg(Reg::R10)),
             Instruction::Div(t, Operand::Reg(Reg::R10)),
+        ],
+        // Binary operations on double require register as destination
+        Instruction::Binary {
+            t: AsmType::Double,
+            dst: Operand::Reg(_),
+            ..
+        } => vec![instruction],
+        Instruction::Binary {
+            op,
+            t: AsmType::Double,
+            src,
+            dst,
+        } => vec![
+            Instruction::Mov(AsmType::Double, dst.clone(), Operand::Reg(Reg::XMM15)),
+            Instruction::Binary {
+                op,
+                t: AsmType::Double,
+                src,
+                dst: Operand::Reg(Reg::XMM15),
+            },
+            Instruction::Mov(AsmType::Double, Operand::Reg(Reg::XMM15), dst),
         ],
         // Add/Sub/And/Or/Xor can't use take large immediates as source operands
         Instruction::Binary {
@@ -221,6 +255,12 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
                 ];
             }
         }
+        // Destination of comisd must be a register
+        Instruction::Cmp(AsmType::Double, _, Operand::Reg(_)) => vec![instruction],
+        Instruction::Cmp(AsmType::Double, src, dst) => vec![
+            Instruction::Mov(AsmType::Double, dst, Operand::Reg(Reg::XMM15)),
+            Instruction::Cmp(AsmType::Double, src, Operand::Reg(Reg::XMM15)),
+        ],
         // Both operands of cmp can't be in memory
         Instruction::Cmp(
             t,
@@ -258,6 +298,32 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
             Instruction::Mov(AsmType::Quadword, src, Operand::Reg(Reg::R10)),
             Instruction::Push(Operand::Reg(Reg::R10)),
         ],
+        // destination of cvttsd2si must be a register
+        Instruction::Cvttsd2si(t, src, dst @ Operand::Stack(_) | dst @ Operand::Data(_)) => vec![
+            Instruction::Cvttsd2si(t.clone(), src, Operand::Reg(Reg::R11)),
+            Instruction::Mov(t, Operand::Reg(Reg::R11), dst),
+        ],
+        Instruction::Cvtsi2sd(t, src, dst) => {
+            if is_constant(&src) && is_memory(&dst) {
+                vec![
+                    Instruction::Mov(t.clone(), src, Operand::Reg(Reg::R10)),
+                    Instruction::Cvtsi2sd(t, Operand::Reg(Reg::R10), Operand::Reg(Reg::XMM15)),
+                    Instruction::Mov(AsmType::Double, Operand::Reg(Reg::XMM15), dst),
+                ]
+            } else if is_constant(&src) {
+                vec![
+                    Instruction::Mov(t.clone(), src, Operand::Reg(Reg::R10)),
+                    Instruction::Cvtsi2sd(t, Operand::Reg(Reg::R10), dst),
+                ]
+            } else if is_memory(&dst) {
+                vec![
+                    Instruction::Cvtsi2sd(t, src, Operand::Reg(Reg::XMM15)),
+                    Instruction::Mov(AsmType::Double, Operand::Reg(Reg::XMM15), dst),
+                ]
+            } else {
+                vec![Instruction::Cvtsi2sd(t, src, dst)]
+            }
+        }
         other => vec![other],
     }
 }
@@ -285,7 +351,7 @@ fn fixup_tl(tl: TopLevel, symbol_table: &SymbolTable) -> TopLevel {
             };
             x
         }
-        TopLevel::StaticVariable { .. } => tl,
+        TopLevel::StaticVariable { .. } | TopLevel::StaticConstant { .. } => tl,
     }
 }
 

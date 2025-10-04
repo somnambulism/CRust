@@ -11,6 +11,7 @@ pub enum Entry {
     Obj {
         t: AsmType,
         is_static: bool,
+        constant: bool,
     },
 }
 
@@ -42,6 +43,18 @@ impl SymbolTable {
             Entry::Obj {
                 t: t.clone(),
                 is_static,
+                constant: false,
+            },
+        );
+    }
+
+    pub fn add_constant(&mut self, const_name: &str, t: &AsmType) {
+        self.table.insert(
+            const_name.to_string(),
+            Entry::Obj {
+                t: t.clone(),
+                is_static: true,
+                constant: true,
             },
         );
     }
@@ -78,7 +91,7 @@ impl SymbolTable {
                 ..
             } => 4,
             Entry::Obj {
-                t: AsmType::Quadword,
+                t: AsmType::Quadword | AsmType::Double,
                 ..
             } => 8,
             Entry::Fun { .. } => {
@@ -94,7 +107,7 @@ impl SymbolTable {
                 ..
             } => 4,
             Entry::Obj {
-                t: AsmType::Quadword,
+                t: AsmType::Quadword | AsmType::Double,
                 ..
             } => 8,
             Entry::Fun { .. } => {
@@ -115,6 +128,16 @@ impl SymbolTable {
             Entry::Obj { is_static, .. } => *is_static,
             _ => {
                 panic!("Internal error: functions don't have storage duration");
+            }
+        }
+    }
+
+    pub fn is_constant(&self, name: &str) -> bool {
+        match self.table.get(name).unwrap() {
+            Entry::Obj { constant: true, .. } => true,
+            Entry::Obj { .. } => false,
+            Entry::Fun { .. } => {
+                panic!("Internal error: is_constant doesn't make sense for functions");
             }
         }
     }

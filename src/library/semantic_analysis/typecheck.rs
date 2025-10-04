@@ -30,6 +30,8 @@ fn convert_to(e: TypedExp, target_type: Type) -> TypedExp {
 fn get_common_type(t1: &Type, t2: &Type) -> Type {
     if t1 == t2 {
         t1.clone()
+    } else if t1 == &Type::Double || t2 == &Type::Double {
+        Type::Double
     } else if t1.get_size() == t2.get_size() {
         if t1.is_signed() {
             t2.clone()
@@ -114,6 +116,9 @@ impl TypeChecker {
         let unary_exp = InnerExp::Unary(op.clone(), Box::new(typed_inner.clone()));
         match op {
             UnaryOperator::Not => TypedExp::set_type(unary_exp, Type::Int),
+            UnaryOperator::Complement if typed_inner.get_type() == Type::Double => {
+                panic!("Can't apply bitwise complement to double");
+            }
             _ => TypedExp::set_type(unary_exp, typed_inner.get_type()),
         }
     }
@@ -135,6 +140,9 @@ impl TypeChecker {
                 let binary_exp =
                     InnerExp::Binary(op.clone(), converted_e1.into(), converted_e2.into());
                 match op {
+                    BinaryOperator::Mod if common_type == Type::Double => {
+                        panic!("Can't apply % to double");
+                    }
                     BinaryOperator::Add
                     | BinaryOperator::Subtract
                     | BinaryOperator::Multiply
@@ -248,6 +256,7 @@ impl TypeChecker {
                     T::ConstLong(l) => StaticInit::LongInit(l),
                     T::ConstUInt(u) => StaticInit::UIntInit(u),
                     T::ConstULong(ul) => StaticInit::ULongInit(ul),
+                    T::ConstDouble(d) => StaticInit::DoubleInit(d),
                 };
                 InitialValue::Initial(init_val)
             }

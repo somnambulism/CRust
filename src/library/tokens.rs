@@ -1,6 +1,6 @@
 use num_bigint::BigInt;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Tokens with contents
     Identifier(String),
@@ -8,12 +8,14 @@ pub enum Token {
     ConstLong(BigInt),
     ConstUInt(BigInt),
     ConstULong(BigInt),
+    ConstDouble(f64),
 
     // Keywords
     KWInt,
     KWLong,
     KWSigned,
     KWUnsigned,
+    KWDouble,
     KWReturn,
     KWVoid,
     KWIf,

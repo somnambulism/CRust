@@ -1,3 +1,6 @@
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
+
 use crate::library::{
     r#const::{T, type_of_const},
     types::Type,
@@ -14,15 +17,21 @@ fn const_to_int64(c: &T) -> i64 {
         T::ConstUInt(ui) => *ui as i64,
         T::ConstLong(l) => *l,
         T::ConstULong(ul) => *ul as i64,
+        T::ConstDouble(d) => *d as i64,
     }
 }
 
+/*
+ * Convert int64 to a constant. Preserve the value if possible and wrap modulo
+ * the size of the target type otherwise.
+ */
 fn const_of_int64(v: i64, target_type: &Type) -> T {
     match target_type {
         Type::Int => T::ConstInt(v as i32),
         Type::Long => T::ConstLong(v),
         Type::UInt => T::ConstUInt(v as u32),
         Type::ULong => T::ConstULong(v as u64),
+        Type::Double => T::ConstDouble(v as f64),
         Type::FunType { .. } => panic!("Internal error: can't convert to function type"),
     }
 }
@@ -31,14 +40,32 @@ pub fn const_convert(target_type: &Type, c: &T) -> T {
     if type_of_const(c) == *target_type {
         return c.clone();
     } else {
-        /*
-         * Convert c to int64, then to target_type, to avoid exponential explosion
-         * of different cases. Conversion to int64 preserves value (except when
-         * converting from out-of-range ulong, where it preserves representation).
-         * Conversion from int64 to const wraps modulo const size.
-         */
-        let as_int64 = const_to_int64(c);
-        return const_of_int64(as_int64, target_type);
+        match (target_type, c) {
+            /*
+             * Because some values in the range of both double and ulong are outside the
+             * range of int64, we need to handle conversions between double and ulong as
+             * special cases instead of converting through int64
+             */
+            (Type::Double, T::ConstULong(ul)) => {
+                let z = BigInt::from(*ul);
+                T::ConstDouble(z.to_f64().unwrap())
+            }
+            (Type::ULong, T::ConstDouble(d)) => {
+                let z = BigInt::from(*d as i64);
+                let as_u64 = z.to_u64().expect("Out of range for u64");
+                T::ConstULong(as_u64)
+            }
+            _ => {
+                /*
+                 * Convert c to int64, then to target_type, to avoid exponential explosion
+                 * of different cases. Conversion to int64 preserves value (except when
+                 * converting from out-of-range ulong, where it preserves representation).
+                 * Conversion from int64 to const wraps modulo const size.
+                 */
+                let as_int64 = const_to_int64(c);
+                return const_of_int64(as_int64, target_type);
+            }
+        }
     }
 }
 
@@ -118,7 +145,10 @@ mod tests {
     #[test]
     fn int_to_ulong() {
         let i = T::ConstInt(-10);
-        assert_eq!(const_convert(&Type::ULong, &i), T::ConstULong(18446744073709551606));
+        assert_eq!(
+            const_convert(&Type::ULong, &i),
+            T::ConstULong(18446744073709551606)
+        );
     }
 
     #[test]

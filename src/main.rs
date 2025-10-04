@@ -49,7 +49,7 @@ fn compile(stage: &Stage, preprocessed_src: &str, debug: bool) -> String {
     replace_extension(preprocessed_src, "s")
 }
 
-fn assemble_and_link(src: &str, link: bool, cleanup: bool) {
+fn assemble_and_link(src: &str, link: bool, cleanup: bool, libs: &[&str]) {
     let assembly_file = replace_extension(src, "s");
     let output_file = if link {
         replace_extension(src, "exe")
@@ -61,11 +61,17 @@ fn assemble_and_link(src: &str, link: bool, cleanup: bool) {
     if !link {
         args.push("-c");
     }
-    args.extend(&[
-        &assembly_file,
-        "-o",
-        &output_file,
-    ]);
+
+    let lib_options = libs
+        .iter()
+        .map(|lib| format!("-l{}", lib))
+        .collect::<Vec<_>>();
+
+    args.push(&assembly_file);
+    args.extend(lib_options.iter().map(|s| s.as_str()));
+    args.extend(&["-o", &output_file]);
+
+    println!("Running: gcc {}", args.join(" "));
 
     run_command("gcc", &args);
 
@@ -74,16 +80,16 @@ fn assemble_and_link(src: &str, link: bool, cleanup: bool) {
     }
 }
 
-fn driver(debug: bool, stage: &Stage, src: &str) {
+fn driver(debug: bool, libs: &[&str], stage: &Stage, src: &str) {
     let preprocessed_name = preprocess(src);
     let assembly_name = compile(stage, &preprocessed_name, debug);
 
     match *stage {
         Stage::Executable => {
-            assemble_and_link(&assembly_name, true, !debug);
+            assemble_and_link(&assembly_name, true, !debug, libs);
         }
         Stage::Obj => {
-            assemble_and_link(&assembly_name, false, !debug);
+            assemble_and_link(&assembly_name, false, !debug, &[]);
         }
         _ => (),
     }
@@ -131,6 +137,14 @@ struct Args {
     )]
     debug: bool,
 
+    #[arg(
+        short = 'l',
+        help = "Link against library (passed through to assemble/link command)",
+        num_args = 0..,
+        action = clap::ArgAction::Append,
+    )]
+    libs: Vec<String>,
+
     #[arg()]
     input: Option<String>,
 }
@@ -157,8 +171,10 @@ fn main() {
         Stage::Executable
     };
 
+    let libs = args.libs.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+
     if let Some(input_file) = args.input {
-        driver(args.debug, &stage, &input_file);
+        driver(args.debug, &libs, &stage, &input_file);
     } else {
         eprintln!("Usage: <program> [options] <source-file>");
         std::process::exit(1);

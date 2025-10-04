@@ -9,7 +9,7 @@ use crate::library::{
         storage_class::StorageClass,
         untyped_exp::Exp,
     },
-    util::unique_ids::make_named_temporary,
+    util::unique_ids::MAKE_NAMED_TEMPORARY,
 };
 
 #[derive(Clone)]
@@ -158,7 +158,7 @@ impl Resolver {
         } else {
             // variable isn't in the map, or was defined in an outer scope;
             // generate a unique name and add it to the map
-            let unique_name = make_named_temporary(name);
+            let unique_name = MAKE_NAMED_TEMPORARY(name);
             VarEntry {
                 unique_name: unique_name.clone(),
                 from_current_scope: true,

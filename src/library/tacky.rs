@@ -44,6 +44,22 @@ pub enum Instruction {
         src: TackyVal,
         dst: TackyVal,
     },
+    DoubleToInt {
+        src: TackyVal,
+        dst: TackyVal,
+    },
+    IntToDouble {
+        src: TackyVal,
+        dst: TackyVal,
+    },
+    DoubleToUInt {
+        src: TackyVal,
+        dst: TackyVal,
+    },
+    UIntToDouble {
+        src: TackyVal,
+        dst: TackyVal,
+    },
     Truncate {
         src: TackyVal,
         dst: TackyVal,

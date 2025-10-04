@@ -6,6 +6,7 @@ pub enum T {
     ConstLong(i64),
     ConstUInt(u32),
     ConstULong(u64),
+    ConstDouble(f64),
 }
 
 pub const INT_ZERO: T = T::ConstInt(0);
@@ -17,5 +18,6 @@ pub fn type_of_const(c: &T) -> Type {
         T::ConstLong(_) => Type::Long,
         T::ConstUInt(_) => Type::UInt,
         T::ConstULong(_) => Type::ULong,
+        T::ConstDouble(_) => Type::Double,
     }
 }

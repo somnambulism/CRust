@@ -8,14 +8,24 @@ use regex::Regex;
 
 #[derive(Debug, Clone)]
 pub struct TokenDef {
-    re: Regex,
+    re: Regex, // regular expression to recognize a token
+    group: usize,
+    /*
+     * The match group within the regular expression that matches just the
+     * token itself (and not any subsequent tokens that we need to consider
+     * to recognize the match). In the common case where we don't need to
+     * look at subsequent tokens, this is group 0, which matches the whole
+     * regex. For constants, this is group 1.
+     */
     converter: fn(&str) -> Token,
+    // A function to convert the matched substring into a token
 }
 
 #[derive(Clone, Debug)]
 pub struct MatchDef {
     matched_substring: String,
-    matching_token: TokenDef,
+    // Substring matched the capture group specified in TokenDef
+    matching_token: TokenDef, // Which token is matched
 }
 
 pub struct Lexer {
@@ -24,191 +34,247 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new() -> Self {
+        // List of token definitions
         let token_defs = vec![
+            // all identifiers, including keywords
             TokenDef {
                 re: Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*\b").unwrap(),
+                group: 0,
                 converter: Lexer::convert_identifier,
             },
             // constants
             TokenDef {
-                re: Regex::new(r"^[0-9]+\b").unwrap(),
+                re: Regex::new(r"^([0-9]+)[^\w.]").unwrap(),
+                group: 1,
                 converter: Lexer::convert_int,
             },
             TokenDef {
-                re: Regex::new(r"^[0-9]+[lL]\b").unwrap(),
+                re: Regex::new(r"^([0-9]+[lL])[^\w.]").unwrap(),
+                group: 1,
                 converter: Lexer::convert_long,
             },
             TokenDef {
-                re: Regex::new(r"^[0-9]+[uU]\b").unwrap(),
+                re: Regex::new(r"^([0-9]+[uU])[^\w.]").unwrap(),
+                group: 1,
                 converter: Lexer::convert_uint,
             },
             TokenDef {
-                re: Regex::new(r"^[0-9]+([lL][uU]|[uU][lL])\b").unwrap(),
+                re: Regex::new(r"^([0-9]+([lL][uU]|[uU][lL]))[^\w.]").unwrap(),
+                group: 1,
                 converter: Lexer::convert_ulong,
+            },
+            TokenDef {
+                re: Regex::new(
+                    r"^(([0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)[^\w.]",
+                )
+                .unwrap(),
+                group: 1,
+                converter: Lexer::convert_double,
             },
             // punctuation
             TokenDef {
                 re: Regex::new(r"^\(").unwrap(),
+                group: 0,
                 converter: |_s| Token::OpenParen,
             },
             TokenDef {
                 re: Regex::new(r"^\)").unwrap(),
+                group: 0,
                 converter: |_s| Token::CloseParen,
             },
             TokenDef {
                 re: Regex::new(r"^\{").unwrap(),
+                group: 0,
                 converter: |_s| Token::OpenBrace,
             },
             TokenDef {
                 re: Regex::new(r"^\}").unwrap(),
+                group: 0,
                 converter: |_s| Token::CloseBrace,
             },
             TokenDef {
                 re: Regex::new(r"^;").unwrap(),
+                group: 0,
                 converter: |_s| Token::Semicolon,
             },
             TokenDef {
                 re: Regex::new("^--").unwrap(),
+                group: 0,
                 converter: |_s| Token::DoubleHyphen,
             },
             TokenDef {
                 re: Regex::new(r"^\+\+").unwrap(),
+                group: 0,
                 converter: |_s| Token::DoublePlus,
             },
             TokenDef {
                 re: Regex::new("^<<=").unwrap(),
+                group: 0,
                 converter: |_s| Token::LeftShiftEqual,
             },
             TokenDef {
                 re: Regex::new("^>>=").unwrap(),
+                group: 0,
                 converter: |_s| Token::RightShiftEqual,
             },
             TokenDef {
                 re: Regex::new("^<<").unwrap(),
+                group: 0,
                 converter: |_s| Token::LeftShift,
             },
             TokenDef {
                 re: Regex::new("^>>").unwrap(),
+                group: 0,
                 converter: |_s| Token::RightShift,
             },
             TokenDef {
                 re: Regex::new("^&&").unwrap(),
+                group: 0,
                 converter: |_s| Token::LogicalAnd,
             },
             TokenDef {
                 re: Regex::new(r"^\|\|").unwrap(),
+                group: 0,
                 converter: |_s| Token::LogicalOr,
             },
             TokenDef {
                 re: Regex::new("^==").unwrap(),
+                group: 0,
                 converter: |_s| Token::DoubleEqual,
             },
             TokenDef {
                 re: Regex::new("^!=").unwrap(),
+                group: 0,
                 converter: |_s| Token::NotEqual,
             },
             TokenDef {
                 re: Regex::new("^<=").unwrap(),
+                group: 0,
                 converter: |_s| Token::LessOrEqual,
             },
             TokenDef {
                 re: Regex::new("^>=").unwrap(),
+                group: 0,
                 converter: |_s| Token::GreaterOrEqual,
             },
             TokenDef {
                 re: Regex::new(r"^\+=").unwrap(),
+                group: 0,
                 converter: |_s| Token::PlusEqual,
             },
             TokenDef {
                 re: Regex::new("^-=").unwrap(),
+                group: 0,
                 converter: |_s| Token::MinusEqual,
             },
             TokenDef {
                 re: Regex::new(r"^\*=").unwrap(),
+                group: 0,
                 converter: |_s| Token::StarEqual,
             },
             TokenDef {
                 re: Regex::new("^/=").unwrap(),
+                group: 0,
                 converter: |_s| Token::SlashEqual,
             },
             TokenDef {
                 re: Regex::new("^%=").unwrap(),
+                group: 0,
                 converter: |_s| Token::PercentEqual,
             },
             TokenDef {
                 re: Regex::new("^&=").unwrap(),
+                group: 0,
                 converter: |_s| Token::AmpersandEqual,
             },
             TokenDef {
                 re: Regex::new(r"^\|=").unwrap(),
+                group: 0,
                 converter: |_s| Token::PipeEqual,
             },
             TokenDef {
                 re: Regex::new(r"^\^=").unwrap(),
+                group: 0,
                 converter: |_s| Token::CaretEqual,
             },
             TokenDef {
                 re: Regex::new("^-").unwrap(),
+                group: 0,
                 converter: |_s| Token::Hyphen,
             },
             TokenDef {
                 re: Regex::new("^~").unwrap(),
+                group: 0,
                 converter: |_s| Token::Tilde,
             },
             TokenDef {
                 re: Regex::new(r"^\+").unwrap(),
+                group: 0,
                 converter: |_s| Token::Plus,
             },
             TokenDef {
                 re: Regex::new(r"^\*").unwrap(),
+                group: 0,
                 converter: |_s| Token::Star,
             },
             TokenDef {
                 re: Regex::new("^/").unwrap(),
+                group: 0,
                 converter: |_s| Token::Slash,
             },
             TokenDef {
                 re: Regex::new("^%").unwrap(),
+                group: 0,
                 converter: |_s| Token::Percent,
             },
             TokenDef {
                 re: Regex::new("^&").unwrap(),
+                group: 0,
                 converter: |_s| Token::Ampersand,
             },
             TokenDef {
                 re: Regex::new(r"^\|").unwrap(),
+                group: 0,
                 converter: |_s| Token::Pipe,
             },
             TokenDef {
                 re: Regex::new(r"^\^").unwrap(),
+                group: 0,
                 converter: |_s| Token::Caret,
             },
             TokenDef {
                 re: Regex::new("^!").unwrap(),
+                group: 0,
                 converter: |_s| Token::Bang,
             },
             TokenDef {
                 re: Regex::new("^<").unwrap(),
+                group: 0,
                 converter: |_s| Token::LessThan,
             },
             TokenDef {
                 re: Regex::new("^>").unwrap(),
+                group: 0,
                 converter: |_s| Token::GreaterThan,
             },
             TokenDef {
                 re: Regex::new("^=").unwrap(),
+                group: 0,
                 converter: |_s| Token::EqualSign,
             },
             TokenDef {
                 re: Regex::new(r"^\?").unwrap(),
+                group: 0,
                 converter: |_s| Token::QuestionMark,
             },
             TokenDef {
                 re: Regex::new("^:").unwrap(),
+                group: 0,
                 converter: |_s| Token::Colon,
             },
             TokenDef {
                 re: Regex::new("^,").unwrap(),
+                group: 0,
                 converter: |_s| Token::Comma,
             },
         ];
@@ -241,9 +307,10 @@ impl Lexer {
 
     fn find_match(&self, input: &str) -> Option<MatchDef> {
         for token_def in &self.token_defs {
-            if let Some(m) = token_def.re.find(input) {
+            if let Some(m) = token_def.re.captures(input) {
+                // It matched! Now extract the matching substring.
                 return Some(MatchDef {
-                    matched_substring: m.as_str().to_string(),
+                    matched_substring: m.get(token_def.group).unwrap().as_str().to_string(),
                     matching_token: token_def.clone(),
                 });
             }
@@ -268,6 +335,7 @@ impl Lexer {
             "long" => Token::KWLong,
             "unsigned" => Token::KWUnsigned,
             "signed" => Token::KWSigned,
+            "double" => Token::KWDouble,
             "goto" => Token::KWGoto,
             "switch" => Token::KWSwitch,
             "case" => Token::KWCase,
@@ -296,6 +364,10 @@ impl Lexer {
         // remove ul/lu suffix
         let const_str = string_util::chop_suffix(s, 2);
         Token::ConstULong(BigInt::from_str(const_str).unwrap())
+    }
+
+    fn convert_double(s: &str) -> Token {
+        Token::ConstDouble(f64::from_str(s).unwrap())
     }
 }
 

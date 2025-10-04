@@ -4,6 +4,7 @@ pub enum Type {
     Long,
     UInt,
     ULong,
+    Double,
     FunType {
         param_types: Vec<Type>,
         ret_type: Box<Type>,
@@ -14,7 +15,7 @@ impl Type {
     pub fn get_size(&self) -> i8 {
         match self {
             &Type::Int | &Type::UInt => 4,
-            &Type::Long | &Type::ULong => 8,
+            &Type::Long | &Type::ULong | &Type::Double => 8,
             &Type::FunType { .. } => {
                 panic!("Internal error: function type doesn't have size.")
             }
@@ -24,7 +25,7 @@ impl Type {
     pub fn get_alignment(&self) -> i8 {
         match self {
             &Type::Int | &Type::UInt => 4,
-            &Type::Long | &Type::ULong => 8,
+            &Type::Long | &Type::ULong | &Type::Double => 8,
             &Type::FunType { .. } => {
                 panic!("Internal error: function type doesn't have alignment.")
             }
@@ -35,8 +36,11 @@ impl Type {
         match self {
             &Type::Int | &Type::Long => true,
             &Type::UInt | &Type::ULong => false,
-            &Type::FunType { .. } => {
-                panic!("Internal error: signedness doesn't make sense for function types.")
+            &Type::Double | &Type::FunType { .. } => {
+                panic!(
+                    "Internal error: signedness doesn't make sense for type {:?}",
+                    self
+                )
             }
         }
     }

@@ -10,6 +10,13 @@ pub enum Reg {
     R10,
     R11,
     SP,
+    XMM0,
+    XMM1,
+    XMM2,
+    XMM3,
+    XMM7,
+    XMM14,
+    XMM15,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -25,6 +32,7 @@ pub enum Operand {
 pub enum UnaryOperator {
     Neg,
     Not,
+    Shr,
 }
 
 #[derive(Clone, Debug)]
@@ -32,6 +40,7 @@ pub enum BinaryOperator {
     Add,
     Sub,
     Mult,
+    DivDouble,
     And,
     Or,
     Xor,
@@ -59,6 +68,7 @@ pub enum CondCode {
 pub enum AsmType {
     Longword,
     Quadword,
+    Double,
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +76,8 @@ pub enum Instruction {
     Mov(AsmType, Operand, Operand),
     Movsx(Operand, Operand),
     MovZeroExtend(Operand, Operand),
+    Cvttsd2si(AsmType, Operand, Operand),
+    Cvtsi2sd(AsmType, Operand, Operand),
     Unary(UnaryOperator, AsmType, Operand),
     Binary {
         op: BinaryOperator,
@@ -97,6 +109,11 @@ pub enum TopLevel {
         name: String,
         alignment: i8,
         global: bool,
+        init: StaticInit,
+    },
+    StaticConstant {
+        name: String,
+        alignment: i8,
         init: StaticInit,
     },
 }

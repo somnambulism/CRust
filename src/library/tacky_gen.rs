@@ -177,25 +177,56 @@ impl TackyGen {
         } else {
             let dst_name = self.create_tmp(target_type.clone());
             let dst = TackyVal::Var(dst_name);
-            let cast_instruction = if target_type.get_size() == inner_type.get_size() {
-                Instruction::Copy {
-                    src: result,
-                    dst: dst.clone(),
+            let cast_instruction = match (target_type.clone(), inner_type.clone()) {
+                (Type::Double, _) => {
+                    if inner_type.is_signed() {
+                        Instruction::IntToDouble {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    } else {
+                        Instruction::UIntToDouble {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    }
                 }
-            } else if target_type.get_size() < inner_type.get_size() {
-                Instruction::Truncate {
-                    src: result,
-                    dst: dst.clone(),
+                (_, Type::Double) => {
+                    if target_type.is_signed() {
+                        Instruction::DoubleToInt {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    } else {
+                        Instruction::DoubleToUInt {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    }
                 }
-            } else if inner_type.is_signed() {
-                Instruction::SignExtend {
-                    src: result,
-                    dst: dst.clone(),
-                }
-            } else {
-                Instruction::ZeroExtend {
-                    src: result,
-                    dst: dst.clone(),
+                (_, _) => {
+                    // cast b/t int types
+                    if target_type.get_size() == inner_type.get_size() {
+                        Instruction::Copy {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    } else if target_type.get_size() < inner_type.get_size() {
+                        Instruction::Truncate {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    } else if inner_type.is_signed() {
+                        Instruction::SignExtend {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    } else {
+                        Instruction::ZeroExtend {
+                            src: result,
+                            dst: dst.clone(),
+                        }
+                    }
                 }
             };
 

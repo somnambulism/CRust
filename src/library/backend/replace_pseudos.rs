@@ -104,6 +104,18 @@ impl ReplacementState {
                 let new_op = self.replace_operand(op, symbols);
                 Instruction::Push(new_op)
             }
+            Instruction::Cvttsd2si(t, src, dst) => {
+                let new_src = self.replace_operand(src, symbols);
+                let new_dst = self.replace_operand(dst, symbols);
+                let new_cvt = Instruction::Cvttsd2si(t.clone(), new_src, new_dst);
+                new_cvt
+            }
+            Instruction::Cvtsi2sd(t, src, dst) => {
+                let new_src = self.replace_operand(src, symbols);
+                let new_dst = self.replace_operand(dst, symbols);
+                let new_cvt = Instruction::Cvtsi2sd(t.clone(), new_src, new_dst);
+                new_cvt
+            }
             Instruction::Ret
             | Instruction::Cdq(_)
             | Instruction::Label(_)
@@ -133,7 +145,7 @@ fn replace_pseudos_in_tl(top_level: TopLevel, symbol_table: &mut SymbolTable) ->
                 instructions: fixed_instructions,
             }
         }
-        TopLevel::StaticVariable { .. } => top_level,
+        TopLevel::StaticVariable { .. } | TopLevel::StaticConstant { .. } => top_level,
     }
 }
 
