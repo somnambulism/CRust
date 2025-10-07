@@ -96,3 +96,4 @@ the source code into C...
 - Support for `static` and `extern` keywords.
 - Long type
 - Unsigned integers
+- Floating point type `double`
