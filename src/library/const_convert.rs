@@ -51,8 +51,8 @@ pub fn const_convert(target_type: &Type, c: &T) -> T {
                 T::ConstDouble(z.to_f64().unwrap())
             }
             (Type::ULong, T::ConstDouble(d)) => {
-                let z = BigInt::from(*d as i64);
-                let as_u64 = z.to_u64().expect("Out of range for u64");
+                // Convert double to u64 by truncation toward zero.
+                let as_u64 = *d as u64;
                 T::ConstULong(as_u64)
             }
             _ => {

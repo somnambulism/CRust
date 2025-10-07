@@ -217,21 +217,30 @@ impl CodeGen {
             }]
         };
 
+        let pass_reg_args = args.iter().filter(|a| matches!(a.loc, ArgLoc::Reg(_)));
+        let pass_stack_args = args.iter().rev().filter(|a| matches!(a.loc, ArgLoc::Stack));
+
         // pass args in registers
-        args.iter().for_each(|arg| match &arg.loc {
-            ArgLoc::Reg(r) => match arg.asm_type {
-                AsmType::Double => instructions.push(Instruction::Mov(
-                    AsmType::Double,
-                    arg.operand.clone(),
-                    Operand::Reg(r.clone()),
-                )),
-                _ => instructions.push(Instruction::Mov(
-                    arg.asm_type.clone(),
-                    arg.operand.clone(),
-                    Operand::Reg(r.clone()),
-                )),
-            },
-            ArgLoc::Stack => match arg.operand {
+        for arg in pass_reg_args {
+            if let ArgLoc::Reg(r) = &arg.loc {
+                match arg.asm_type {
+                    AsmType::Double => instructions.push(Instruction::Mov(
+                        AsmType::Double,
+                        arg.operand.clone(),
+                        Operand::Reg(r.clone()),
+                    )),
+                    _ => instructions.push(Instruction::Mov(
+                        arg.asm_type.clone(),
+                        arg.operand.clone(),
+                        Operand::Reg(r.clone()),
+                    )),
+                }
+            }
+        }
+
+        // pass args on stack
+        for arg in pass_stack_args {
+            match arg.operand {
                 Operand::Imm(_) | Operand::Reg(_) => {
                     instructions.push(Instruction::Push(arg.operand.clone()))
                 }
@@ -250,8 +259,8 @@ impl CodeGen {
                         ])
                     }
                 }
-            },
-        });
+            }
+        }
 
         // allocate shadow space for the stack
         instructions.push(Instruction::Binary {
@@ -658,83 +667,83 @@ impl CodeGen {
 
         let mut instructions: Vec<Instruction> = vec![];
 
-        // for (idx, param) in params.iter().enumerate() {
-        //     match &param.loc {
-        //         ArgLoc::Reg(reg) => {
-        //             // instructions.extend(vec![Instruction::Mov(
-        //             //     param.asm_type.clone(),
-        //             //     Operand::Reg(reg.clone()),
-        //             //     param.operand.clone(),
-        //             // )]);
-        //             let offset = 16 + (idx as isize) * 8;
-        //             let stk = Operand::Stack(offset);
-        //             instructions.push(Instruction::Mov(
-        //                 param.asm_type.clone(),
-        //                 Operand::Reg(reg.clone()),
-        //                 stk.clone(),
-        //             ));
-        //             // Move from stack slot to pseudo for IR
-        //             instructions.push(Instruction::Mov(
-        //                 param.asm_type.clone(),
-        //                 stk,
-        //                 param.operand.clone(),
-        //             ));
-        //         }
-        //         ArgLoc::Stack => {
-        //             // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
-        //             let offset = 16 + (idx as isize) * 8;
-        //             let stk = Operand::Stack(offset);
-        //             instructions.push(Instruction::Mov(
-        //                 param.asm_type.clone(),
-        //                 stk,
-        //                 param.operand.clone(),
-        //             ));
-        //         }
-        //     }
-        // }
+        for (idx, param) in params.iter().enumerate() {
+            match &param.loc {
+                ArgLoc::Reg(reg) => {
+                    instructions.extend(vec![Instruction::Mov(
+                        param.asm_type.clone(),
+                        Operand::Reg(reg.clone()),
+                        param.operand.clone(),
+                    )]);
+                    // let offset = 16 + (idx as isize) * 8;
+                    // let stk = Operand::Stack(offset);
+                    // instructions.push(Instruction::Mov(
+                    //     param.asm_type.clone(),
+                    //     Operand::Reg(reg.clone()),
+                    //     stk.clone(),
+                    // ));
+                    // // Move from stack slot to pseudo for IR
+                    // instructions.push(Instruction::Mov(
+                    //     param.asm_type.clone(),
+                    //     stk,
+                    //     param.operand.clone(),
+                    // ));
+                }
+                ArgLoc::Stack => {
+                    // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
+                    let offset = 16 + (idx as isize) * 8;
+                    let stk = Operand::Stack(offset);
+                    instructions.push(Instruction::Mov(
+                        param.asm_type.clone(),
+                        stk,
+                        param.operand.clone(),
+                    ));
+                }
+            }
+        }
 
         // Windows x64 ABI: shadow space (32 bytes) is always reserved
         // Move register arguments to stack slots
-        for (idx, param) in params
-            .iter()
-            .filter(|param| matches!(param.loc, ArgLoc::Reg(_)))
-            .enumerate()
-        {
-            // let reg = &PARAM_PASSING_REGS[idx];
-            // Windows: first arg at 16(%rbp), then 24, 32, 40
-            let offset = 16 + (idx as isize) * 8;
-            let stk = Operand::Stack(offset);
-            // let param_t = self.asm_type(&TackyVal::Var(param.to_string()));
-            let reg = match &param.loc {
-                ArgLoc::Reg(r) => r,
-                ArgLoc::Stack => panic!("XEP"),
-            };
-            instructions.push(Instruction::Mov(
-                param.asm_type.clone(),
-                Operand::Reg(reg.clone()),
-                stk.clone(),
-            ));
-            // Move from stack slot to pseudo for IR
-            instructions.push(Instruction::Mov(
-                param.asm_type.clone(),
-                stk,
-                param.operand.clone(),
-            ));
-        }
-        // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
-        for (idx, param) in params
-            .iter()
-            .filter(|param| matches!(param.loc, ArgLoc::Stack))
-            .enumerate()
-        {
-            let offset = 16 + ((4 + idx) as isize) * 8;
-            let stk = Operand::Stack(offset);
-            instructions.push(Instruction::Mov(
-                param.asm_type.clone(),
-                stk,
-                param.operand.clone(),
-            ));
-        }
+        // for (idx, param) in params
+        //     .iter()
+        //     .filter(|param| matches!(param.loc, ArgLoc::Reg(_)))
+        //     .enumerate()
+        // {
+        //     // let reg = &PARAM_PASSING_REGS[idx];
+        //     // Windows: first arg at 16(%rbp), then 24, 32, 40
+        //     let offset = 16 + (idx as isize) * 8;
+        //     let stk = Operand::Stack(offset);
+        //     // let param_t = self.asm_type(&TackyVal::Var(param.to_string()));
+        //     let reg = match &param.loc {
+        //         ArgLoc::Reg(r) => r,
+        //         ArgLoc::Stack => panic!("XEP"),
+        //     };
+        //     instructions.push(Instruction::Mov(
+        //         param.asm_type.clone(),
+        //         Operand::Reg(reg.clone()),
+        //         stk.clone(),
+        //     ));
+        //     // Move from stack slot to pseudo for IR
+        //     instructions.push(Instruction::Mov(
+        //         param.asm_type.clone(),
+        //         stk,
+        //         param.operand.clone(),
+        //     ));
+        // }
+        // // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
+        // for (idx, param) in params
+        //     .iter()
+        //     .filter(|param| matches!(param.loc, ArgLoc::Stack))
+        //     .enumerate()
+        // {
+        //     let offset = 16 + ((4 + idx) as isize) * 8;
+        //     let stk = Operand::Stack(offset);
+        //     instructions.push(Instruction::Mov(
+        //         param.asm_type.clone(),
+        //         stk,
+        //         param.operand.clone(),
+        //     ));
+        // }
 
         instructions
     }
