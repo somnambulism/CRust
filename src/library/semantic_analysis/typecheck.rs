@@ -140,8 +140,13 @@ impl TypeChecker {
                 let binary_exp =
                     InnerExp::Binary(op.clone(), converted_e1.into(), converted_e2.into());
                 match op {
-                    BinaryOperator::Mod if common_type == Type::Double => {
-                        panic!("Can't apply % to double");
+                    BinaryOperator::Mod
+                    | BinaryOperator::BitwiseAnd
+                    | BinaryOperator::BitwiseOr
+                    | BinaryOperator::Xor
+                        if common_type == Type::Double =>
+                    {
+                        panic!("Can't apply % or bitwise operations to double");
                     }
                     BinaryOperator::Add
                     | BinaryOperator::Subtract
@@ -190,6 +195,27 @@ impl TypeChecker {
         let rhs_type = typed_rhs.get_type();
 
         let common_type = get_common_type(&lhs_type, &rhs_type);
+
+        if common_type == Type::Double
+            && matches!(
+                op,
+                CompoundAssignOperator::PercentEqual
+                    | CompoundAssignOperator::AmpersandEqual
+                    | CompoundAssignOperator::CaretEqual
+                    | CompoundAssignOperator::PipeEqual
+            )
+        {
+            panic!("Can't apply % or bitwise operations to double");
+        }
+
+        if common_type == Type::Double
+            && matches!(
+                op,
+                CompoundAssignOperator::LeftShiftEqual | CompoundAssignOperator::RightShiftEqual
+            )
+        {
+            panic!("Can't apply bit-shifts to double");
+        }
 
         let converted_rhs = convert_to(typed_rhs, common_type);
         let assign_exp =

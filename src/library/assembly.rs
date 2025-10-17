@@ -62,6 +62,8 @@ pub enum CondCode {
     AE,
     B,
     BE,
+    P,
+    NP,
 }
 
 #[derive(Clone, Debug, PartialEq)]

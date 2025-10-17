@@ -168,6 +168,61 @@ impl CodeGen {
         convert_type(&self.tacky_type(v))
     }
 
+    // Helper functions for double comparisons w/ support for NaN
+    fn convert_dbl_comparison(
+        &mut self,
+        op: &TackyBinaryOp,
+        dst_t: &AsmType,
+        asm_src1: Operand,
+        asm_src2: Operand,
+        asm_dst: Operand,
+    ) -> Vec<Instruction> {
+        let cond_code = convert_cond_code(false, op);
+        /*
+         * If op is A or AE, can perform usual comparisons;
+         * these are true only if some flags are 0, so they'll be false for unordered results.
+         * If op is B or BE, just flip operands and use A or AE instead.
+         * If op is E or NE, need to check for parity afterwards.
+         */
+        let (cond_code, asm_src1, asm_src2) = match cond_code {
+            CondCode::B => (CondCode::A, asm_src2, asm_src1),
+            CondCode::BE => (CondCode::AE, asm_src2, asm_src1),
+            _ => (cond_code, asm_src1, asm_src2),
+        };
+        let instrs = vec![
+            Instruction::Cmp(AsmType::Double, asm_src2, asm_src1),
+            Instruction::Mov(dst_t.clone(), ZERO, asm_dst.clone()),
+            Instruction::SetCC(cond_code.clone(), asm_dst.clone()),
+        ];
+        let parity_instrs = match cond_code {
+            // zero out destination if parity flag is set,
+            // indicating unordered result
+            CondCode::E => vec![
+                Instruction::Mov(dst_t.clone(), ZERO, Operand::Reg(Reg::R9)),
+                Instruction::SetCC(CondCode::NP, Operand::Reg(Reg::R9)),
+                Instruction::Binary {
+                    op: BinaryOperator::And,
+                    t: dst_t.clone(),
+                    src: Operand::Reg(Reg::R9),
+                    dst: asm_dst.clone(),
+                },
+            ],
+            // set destination to 1 if parity flag is set, indicating ordered result
+            CondCode::NE => vec![
+                Instruction::Mov(dst_t.clone(), ZERO, Operand::Reg(Reg::R9)),
+                Instruction::SetCC(CondCode::P, Operand::Reg(Reg::R9)),
+                Instruction::Binary {
+                    op: BinaryOperator::Or,
+                    t: dst_t.clone(),
+                    src: Operand::Reg(Reg::R9),
+                    dst: asm_dst.clone(),
+                },
+            ],
+            _ => vec![],
+        };
+        [instrs, parity_instrs].concat()
+    }
+
     fn classify_parameters(&mut self, tacky_vals: &Vec<TackyVal>) -> Vec<ArgAssignment> {
         let mut assignments = Vec::new();
 
@@ -335,8 +390,18 @@ impl CodeGen {
                             dst: Operand::Reg(Reg::XMM0),
                         },
                         Instruction::Cmp(src_t, asm_src, Operand::Reg(Reg::XMM0)),
-                        Instruction::Mov(dst_t, ZERO, asm_dst.clone()),
-                        Instruction::SetCC(CondCode::E, asm_dst),
+                        Instruction::Mov(dst_t.clone(), ZERO, asm_dst.clone()),
+                        Instruction::SetCC(CondCode::E, asm_dst.clone()),
+                        // cmp with NaN sets both ZF and PF, but !NaN sould evaluate to 0,
+                        // so we'll calculate:
+                        // !x = ZF && !PF
+                        Instruction::SetCC(CondCode::NP, Operand::Reg(Reg::R9)),
+                        Instruction::Binary {
+                            op: BinaryOperator::And,
+                            t: dst_t,
+                            src: Operand::Reg(Reg::R9),
+                            dst: asm_dst,
+                        },
                     ]
                 } else {
                     vec![
@@ -393,17 +458,22 @@ impl CodeGen {
                     | TackyBinaryOp::GreaterOrEqual
                     | TackyBinaryOp::LessThan
                     | TackyBinaryOp::LessOrEqual => {
-                        let signed = if src_t == AsmType::Double {
-                            false
+                        if src_t == AsmType::Double {
+                            return self
+                                .convert_dbl_comparison(op, &dst_t, asm_src1, asm_src2, asm_dst);
                         } else {
-                            self.tacky_type(src1).is_signed()
-                        };
-                        let cond_code = convert_cond_code(signed, &op);
-                        vec![
-                            Instruction::Cmp(src_t, asm_src2, asm_src1),
-                            Instruction::Mov(dst_t, ZERO, asm_dst.clone()),
-                            Instruction::SetCC(cond_code, asm_dst),
-                        ]
+                            let signed = if src_t == AsmType::Double {
+                                false
+                            } else {
+                                self.tacky_type(src1).is_signed()
+                            };
+                            let cond_code = convert_cond_code(signed, &op);
+                            vec![
+                                Instruction::Cmp(src_t, asm_src2, asm_src1),
+                                Instruction::Mov(dst_t, ZERO, asm_dst.clone()),
+                                Instruction::SetCC(cond_code, asm_dst),
+                            ]
+                        }
                     }
                     // Division/modulo
                     TackyBinaryOp::Divide | TackyBinaryOp::Mod if src_t != AsmType::Double => {
@@ -494,6 +564,7 @@ impl CodeGen {
             TackyInstruction::JumpIfZero(cond, target) => {
                 let t = self.asm_type(cond);
                 let asm_cond = self.convert_val(&cond);
+                let lbl = make_label("nan.jmp.end");
                 if t == AsmType::Double {
                     vec![
                         Instruction::Binary {
@@ -503,7 +574,11 @@ impl CodeGen {
                             dst: Operand::Reg(Reg::XMM0),
                         },
                         Instruction::Cmp(t, asm_cond, Operand::Reg(Reg::XMM0)),
+                        // Comparison to NaN sets ZF and PF flag;
+                        // to treat NaN as nonzero, skip over je instruction if PF flag is set
+                        Instruction::JmpCC(CondCode::P, lbl.clone()),
                         Instruction::JmpCC(CondCode::E, target.to_string()),
+                        Instruction::Label(lbl),
                     ]
                 } else {
                     vec![
@@ -525,6 +600,7 @@ impl CodeGen {
                         },
                         Instruction::Cmp(t, asm_cond, Operand::Reg(Reg::XMM0)),
                         Instruction::JmpCC(CondCode::NE, target.to_string()),
+                        Instruction::JmpCC(CondCode::P, target.to_string()),
                     ]
                 } else {
                     vec![

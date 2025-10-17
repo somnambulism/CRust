@@ -128,6 +128,8 @@ fn show_cond_code(cond_code: &CondCode) -> String {
         CondCode::AE => "ae".to_string(),
         CondCode::B => "b".to_string(),
         CondCode::BE => "be".to_string(),
+        CondCode::P => "p".to_string(),
+        CondCode::NP => "np".to_string(),
     }
 }
 
