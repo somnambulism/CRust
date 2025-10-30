@@ -13,7 +13,7 @@ use super::{
     ast::block_items::{
         BlockItem, Declaration, ForInit, FunctionDeclaration, Statement, VariableDeclaration,
     },
-    ast::ops::{BinaryOperator, CompoundAssignOperator, UnaryOperator},
+    ast::ops::{BinaryOperator, UnaryOperator},
     ast::untyped_exp::Exp,
     tok_stream::TokenStream,
     tokens::Token,
@@ -43,17 +43,54 @@ fn get_precedence(token: &Token) -> Option<i8> {
         Token::QuestionMark => Some(3),
         Token::EqualSign
         | Token::PlusEqual
-        | Token::MinusEqual
+        | Token::HyphenEqual
         | Token::StarEqual
         | Token::SlashEqual
         | Token::PercentEqual
         | Token::AmpersandEqual
         | Token::PipeEqual
         | Token::CaretEqual
-        | Token::LeftShiftEqual
-        | Token::RightShiftEqual => Some(1),
+        | Token::DoubleLeftBracketEqual
+        | Token::DoubleRightBracketEqual => Some(1),
         _ => None,
     }
+}
+
+fn get_compound_operator(token: &Token) -> Option<BinaryOperator> {
+    match token {
+        Token::EqualSign => None,
+        Token::PlusEqual => Some(BinaryOperator::Add),
+        Token::HyphenEqual => Some(BinaryOperator::Subtract),
+        Token::SlashEqual => Some(BinaryOperator::Divide),
+        Token::PercentEqual => Some(BinaryOperator::Mod),
+        Token::StarEqual => Some(BinaryOperator::Multiply),
+        Token::AmpersandEqual => Some(BinaryOperator::BitwiseAnd),
+        Token::PipeEqual => Some(BinaryOperator::BitwiseOr),
+        Token::CaretEqual => Some(BinaryOperator::BitwiseXor),
+        Token::DoubleLeftBracketEqual => Some(BinaryOperator::BitshiftLeft),
+        Token::DoubleRightBracketEqual => Some(BinaryOperator::BitshiftRight),
+        t => panic!(
+            "Internal error: not a compound assignment operator: {:?}",
+            t
+        ),
+    }
+}
+
+fn is_assignment(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::EqualSign
+            | Token::PlusEqual
+            | Token::HyphenEqual
+            | Token::StarEqual
+            | Token::SlashEqual
+            | Token::PercentEqual
+            | Token::AmpersandEqual
+            | Token::CaretEqual
+            | Token::PipeEqual
+            | Token::DoubleLeftBracketEqual
+            | Token::DoubleRightBracketEqual
+    )
 }
 
 // Helper function to check whether a token is a type specifier
@@ -318,6 +355,8 @@ impl Parser {
             Ok(Token::Tilde) => Ok(UnaryOperator::Complement),
             Ok(Token::Hyphen) => Ok(UnaryOperator::Negate),
             Ok(Token::Bang) => Ok(UnaryOperator::Not),
+            Ok(Token::DoublePlus) => Ok(UnaryOperator::Incr),
+            Ok(Token::DoubleHyphen) => Ok(UnaryOperator::Decr),
             other => Err(format!(
                 "Expected a unary operator, found {:?}",
                 other.unwrap()
@@ -337,9 +376,9 @@ impl Parser {
             Ok(Token::Percent) => Ok(BinaryOperator::Mod),
             Ok(Token::Ampersand) => Ok(BinaryOperator::BitwiseAnd),
             Ok(Token::Pipe) => Ok(BinaryOperator::BitwiseOr),
-            Ok(Token::Caret) => Ok(BinaryOperator::Xor),
-            Ok(Token::LeftShift) => Ok(BinaryOperator::LeftShift),
-            Ok(Token::RightShift) => Ok(BinaryOperator::RightShift),
+            Ok(Token::Caret) => Ok(BinaryOperator::BitwiseXor),
+            Ok(Token::LeftShift) => Ok(BinaryOperator::BitshiftLeft),
+            Ok(Token::RightShift) => Ok(BinaryOperator::BitshiftRight),
             Ok(Token::LogicalAnd) => Ok(BinaryOperator::And),
             Ok(Token::LogicalOr) => Ok(BinaryOperator::Or),
             Ok(Token::DoubleEqual) => Ok(BinaryOperator::Equal),
@@ -355,54 +394,17 @@ impl Parser {
         }
     }
 
-    fn parse_compound_assign_op(&mut self) -> Result<CompoundAssignOperator, String> {
-        match self.tokens.take_token() {
-            Ok(Token::PlusEqual) => Ok(CompoundAssignOperator::PlusEqual),
-            Ok(Token::MinusEqual) => Ok(CompoundAssignOperator::MinusEqual),
-            Ok(Token::StarEqual) => Ok(CompoundAssignOperator::StarEqual),
-            Ok(Token::SlashEqual) => Ok(CompoundAssignOperator::SlashEqual),
-            Ok(Token::PercentEqual) => Ok(CompoundAssignOperator::PercentEqual),
-            Ok(Token::AmpersandEqual) => Ok(CompoundAssignOperator::AmpersandEqual),
-            Ok(Token::PipeEqual) => Ok(CompoundAssignOperator::PipeEqual),
-            Ok(Token::CaretEqual) => Ok(CompoundAssignOperator::CaretEqual),
-            Ok(Token::LeftShiftEqual) => Ok(CompoundAssignOperator::LeftShiftEqual),
-            Ok(Token::RightShiftEqual) => Ok(CompoundAssignOperator::RightShiftEqual),
-            other => Err(format!(
-                "Expected a compound assignment operator, found {:?}",
-                other.unwrap()
-            )),
-        }
-    }
-
-    // Helper function to parse postfix increment and decrement
-    fn parse_postfix_increment(&mut self, exp: Exp) -> Result<Exp, String> {
-        match self.tokens.peek()? {
-            Token::DoublePlus => {
-                self.tokens.take_token()?;
-                return Ok(Exp::PostfixIncrement(Box::new(exp)));
-            }
-            Token::DoubleHyphen => {
-                self.tokens.take_token()?;
-                return Ok(Exp::PostfixDecrement(Box::new(exp)));
-            }
-            _ => return Ok(exp),
-        }
-    }
-
     // Helper function to parse the middle of a conditional expression:
     // "?" <exp> ":"
     fn parse_conditional_middle(&mut self) -> Result<Exp, String> {
         self.expect(Token::QuestionMark)?;
-        let e = self.parse_exp(0)?;
+        let e = self.parse_expression(0)?;
         self.expect(Token::Colon)?;
         Ok(e)
     }
 
-    // <factor> ::= <const> | <identifier>
-    //              | "(" { <type-specifier> }+ ")" <factor>
-    //              | <unop> <factor> | "(" <exp> ")"
-    //              | <identifier> "(" [ <argument-list ] ")"
-    fn parse_factor(&mut self) -> Result<Exp, String> {
+    // <primary-exp> ::= <int> | <identifier> | <identifier> "(" [ <argument-list ] ")" | "(" <exp> ")"
+    fn parse_primary_expression(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
         match next_token {
             // constant
@@ -429,55 +431,68 @@ impl Parser {
                     Exp::Var(id)
                 };
 
-                self.parse_postfix_increment(exp)
-            }
-            // unary expression
-            Token::Hyphen | Token::Tilde | Token::Bang => {
-                let operator = self.parse_unop()?;
-                let inner_exp = self.parse_factor()?;
-                Ok(Exp::Unary(operator, Box::new(inner_exp)))
-            }
-            // prefix increment
-            Token::DoublePlus => {
-                self.tokens.take_token()?;
-                let inner_exp = self.parse_factor()?;
-                Ok(Exp::PrefixIncrement(Box::new(inner_exp)))
-            }
-            // prefix decrement
-            Token::DoubleHyphen => {
-                self.tokens.take_token()?;
-                let inner_exp = self.parse_factor()?;
-                Ok(Exp::PrefixDecrement(Box::new(inner_exp)))
+                Ok(exp)
             }
             // cast or parenthesized expression
             Token::OpenParen => {
                 // Consume open paren
-                let _ = self.tokens.take_token();
-                if is_type_specifier(self.tokens.peek()?) {
-                    // It's a cast expression
-                    let type_specifiers = self.parse_type_specifier_list()?;
-                    let target_type = self.parse_type(type_specifiers)?;
-                    self.expect(Token::CloseParen)?;
-                    let inner_exp = self.parse_factor()?;
-                    Ok(Exp::Cast {
-                        target_type,
-                        e: Box::new(inner_exp),
-                    })
-                } else {
-                    // It's parenthesized
-                    if let Token::Identifier(_) = self.tokens.peek()? {
-                        if self.tokens.peek_nth(1)? == &Token::CloseParen {
-                            let id = self.parse_id()?;
-                            let _ = self.tokens.take_token();
-                            return self.parse_postfix_increment(Exp::Var(id));
-                        }
-                    }
-                    let e = self.parse_exp(0);
-                    let _ = self.expect(Token::CloseParen);
-                    e
-                }
+                self.tokens.take_token()?;
+                let e = self.parse_expression(0)?;
+                self.expect(Token::CloseParen)?;
+                Ok(e)
             }
             t => Err(format!("Expected a factor, found {:?}", t)),
+        }
+    }
+
+    fn parse_postfix_exp(&mut self) -> Result<Exp, String> {
+        let primary = self.parse_primary_expression()?;
+        self.postfix_helper(primary)
+    }
+
+    fn postfix_helper(&mut self, primary: Exp) -> Result<Exp, String> {
+        match self.tokens.peek()? {
+            Token::DoubleHyphen => {
+                self.tokens.take_token()?;
+                let decr_exp = Exp::PostfixDecr(primary.into());
+                self.postfix_helper(decr_exp)
+            }
+            Token::DoublePlus => {
+                self.tokens.take_token()?;
+                let incr_exp = Exp::PostfixIncr(primary.into());
+                self.postfix_helper(incr_exp)
+            }
+            _ => Ok(primary),
+        }
+    }
+
+    // <factor> ::= <unop> <factor> | <postfix-exp>
+    fn parse_factor(&mut self) -> Result<Exp, String> {
+        let next_token = self.tokens.peek()?;
+        match next_token {
+            // unary expression
+            Token::Hyphen
+            | Token::Tilde
+            | Token::Bang
+            | Token::DoublePlus
+            | Token::DoubleHyphen => {
+                let operator = self.parse_unop()?;
+                let inner_exp = self.parse_factor()?;
+                Ok(Exp::Unary(operator, Box::new(inner_exp)))
+            }
+            Token::OpenParen if is_type_specifier(self.tokens.peek_nth(1)?) => {
+                // It's a cast expression
+                self.tokens.take_token()?;
+                let type_specifiers = self.parse_type_specifier_list()?;
+                let target_type = self.parse_type(type_specifiers)?;
+                self.expect(Token::CloseParen)?;
+                let inner_exp = self.parse_factor()?;
+                Ok(Exp::Cast {
+                    target_type,
+                    e: Box::new(inner_exp),
+                })
+            }
+            _ => self.parse_postfix_exp(),
         }
     }
 
@@ -485,62 +500,52 @@ impl Parser {
     fn parse_argument_list(&mut self) -> Result<Vec<Exp>, String> {
         let mut args = vec![];
 
-        args.push(self.parse_exp(0)?);
+        args.push(self.parse_expression(0)?);
 
         while self.tokens.peek()? == &Token::Comma {
             self.tokens.take_token()?;
-            args.push(self.parse_exp(0)?);
+            args.push(self.parse_expression(0)?);
         }
 
         Ok(args)
     }
 
-    fn parse_exp(&mut self, min_prec: i8) -> Result<Exp, String> {
+    // <exp> ::= <factor> | <exp> <binop> <exp>
+    fn parse_expression(&mut self, min_prec: i8) -> Result<Exp, String> {
         let mut left = self.parse_factor()?;
-        let mut next_token = self.tokens.peek()?;
+        let mut next_token = self.tokens.peek()?.clone();
 
         while let Some(prec) = get_precedence(&next_token) {
             if prec < min_prec {
                 break;
             }
 
-            match next_token {
-                Token::EqualSign => {
-                    self.tokens.take_token()?;
-                    let right = self.parse_exp(prec)?;
-                    left = Exp::Assignment(Box::new(left), Box::new(right));
-                }
-                Token::PlusEqual
-                | Token::MinusEqual
-                | Token::StarEqual
-                | Token::SlashEqual
-                | Token::PercentEqual
-                | Token::AmpersandEqual
-                | Token::PipeEqual
-                | Token::CaretEqual
-                | Token::LeftShiftEqual
-                | Token::RightShiftEqual => {
-                    let operator = self.parse_compound_assign_op()?;
-                    let right = self.parse_exp(prec)?;
-                    left = Exp::CompoundAssign(operator, Box::new(left), Box::new(right));
-                }
-                Token::QuestionMark => {
-                    let middle = self.parse_conditional_middle()?;
-                    let right = self.parse_exp(prec)?;
-                    left = Exp::Conditional {
-                        condition: left.into(),
-                        then_result: middle.into(),
-                        else_result: right.into(),
-                    };
-                }
-                _ => {
-                    let operator = self.parse_binop()?;
-                    let right = self.parse_exp(prec + 1)?;
-                    left = Exp::Binary(operator, Box::new(left), Box::new(right));
-                }
+            if is_assignment(&next_token) {
+                self.tokens.take_token()?;
+                let right = self.parse_expression(prec)?;
+                println!(
+                    "Parsing assignemnt with left: {:?}, right: {:?}",
+                    left, right
+                );
+                left = match get_compound_operator(&next_token) {
+                    None => Exp::Assignment(left.into(), right.into()),
+                    Some(op) => Exp::CompoundAssign(op, left.into(), right.into()),
+                };
+            } else if next_token == Token::QuestionMark {
+                let middle = self.parse_conditional_middle()?;
+                let right = self.parse_expression(prec)?;
+                left = Exp::Conditional {
+                    condition: left.into(),
+                    then_result: middle.into(),
+                    else_result: right.into(),
+                };
+            } else {
+                let operator = self.parse_binop()?;
+                let right = self.parse_expression(prec + 1)?;
+                left = Exp::Binary(operator, Box::new(left), Box::new(right));
             }
 
-            next_token = self.tokens.peek()?;
+            next_token = self.tokens.peek()?.clone();
         }
 
         Ok(left)
@@ -551,7 +556,7 @@ impl Parser {
             self.tokens.take_token()?;
             return Ok(None);
         } else {
-            let e = self.parse_exp(0)?;
+            let e = self.parse_expression(0)?;
             self.expect(delim)?;
             Ok(Some(e))
         }
@@ -624,7 +629,7 @@ impl Parser {
             tok => {
                 let init = if tok == &Token::EqualSign {
                     self.tokens.take_token()?;
-                    Some(self.parse_exp(0)?)
+                    Some(self.parse_expression(0)?)
                 } else {
                     None
                 };
@@ -677,7 +682,7 @@ impl Parser {
             Ok(Token::KWReturn) => {
                 // consume return keyword
                 self.tokens.take_token()?;
-                let exp = self.parse_exp(0)?;
+                let exp = self.parse_expression(0)?;
                 self.expect(Token::Semicolon)?;
                 Ok(Statement::Return(exp))
             }
@@ -686,7 +691,7 @@ impl Parser {
                 // if statement - consume if keyword
                 self.tokens.take_token()?;
                 self.expect(Token::OpenParen)?;
-                let condition = self.parse_exp(0)?;
+                let condition = self.parse_expression(0)?;
                 self.expect(Token::CloseParen)?;
                 let then_clause = self.parse_statement()?;
                 let else_clause = if let Ok(Token::KWElse) = self.tokens.peek() {
@@ -709,7 +714,7 @@ impl Parser {
                 // consume switch keyword
                 self.tokens.take_token()?;
                 self.expect(Token::OpenParen)?;
-                let condition = self.parse_exp(0)?;
+                let condition = self.parse_expression(0)?;
                 self.expect(Token::CloseParen)?;
                 let body = Box::new(self.parse_statement()?);
                 Ok(Statement::Switch {
@@ -730,7 +735,7 @@ impl Parser {
                         statement: Box::new(statement),
                     })
                 } else {
-                    let exp = self.parse_exp(0)?;
+                    let exp = self.parse_expression(0)?;
                     self.expect(Token::Semicolon)?;
                     Ok(Statement::Expression(exp))
                 }
@@ -792,7 +797,7 @@ impl Parser {
                 // consume while keyword
                 self.tokens.take_token()?;
                 self.expect(Token::OpenParen)?;
-                let condition = self.parse_exp(0)?;
+                let condition = self.parse_expression(0)?;
                 self.expect(Token::CloseParen)?;
                 let body = Box::new(self.parse_statement()?);
                 Ok(Statement::While {
@@ -808,7 +813,7 @@ impl Parser {
                 let body = Box::new(self.parse_statement()?);
                 self.expect(Token::KWWhile)?;
                 self.expect(Token::OpenParen)?;
-                let condition = self.parse_exp(0)?;
+                let condition = self.parse_expression(0)?;
                 self.expect(Token::CloseParen)?;
                 self.expect(Token::Semicolon)?;
                 Ok(Statement::DoWhile {
@@ -923,7 +928,7 @@ mod tests {
     fn expression() {
         let mut parser = Parser::new(vec![Token::ConstInt(BigInt::from(100)), Token::Semicolon]);
         assert_eq!(
-            parser.parse_exp(40).unwrap(),
+            parser.parse_expression(40).unwrap(),
             Exp::Constant(T::ConstInt(100))
         );
     }

@@ -110,12 +110,12 @@ impl Lexer {
             TokenDef {
                 re: Regex::new("^<<=").unwrap(),
                 group: 0,
-                converter: |_s| Token::LeftShiftEqual,
+                converter: |_s| Token::DoubleLeftBracketEqual,
             },
             TokenDef {
                 re: Regex::new("^>>=").unwrap(),
                 group: 0,
-                converter: |_s| Token::RightShiftEqual,
+                converter: |_s| Token::DoubleRightBracketEqual,
             },
             TokenDef {
                 re: Regex::new("^<<").unwrap(),
@@ -165,7 +165,7 @@ impl Lexer {
             TokenDef {
                 re: Regex::new("^-=").unwrap(),
                 group: 0,
-                converter: |_s| Token::MinusEqual,
+                converter: |_s| Token::HyphenEqual,
             },
             TokenDef {
                 re: Regex::new(r"^\*=").unwrap(),

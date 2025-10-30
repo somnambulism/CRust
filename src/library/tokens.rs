@@ -62,15 +62,15 @@ pub enum Token {
     GreaterOrEqual,
     EqualSign,       // =
     PlusEqual,       // +=
-    MinusEqual,      // -=
+    HyphenEqual,      // -=
     StarEqual,       // *=
     SlashEqual,      // /=
     PercentEqual,    // %=
     AmpersandEqual,  // &=
     PipeEqual,       // |=
     CaretEqual,      // ^=
-    LeftShiftEqual,  // <<=
-    RightShiftEqual, // >>=
+    DoubleLeftBracketEqual,  // <<=
+    DoubleRightBracketEqual, // >>=
     QuestionMark,
     Colon,
     Comma,

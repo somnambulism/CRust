@@ -6,10 +6,7 @@ use crate::library::{
             Block, BlockItem, Declaration, ForInit, FunctionDeclaration as AstFunction,
             Program as AstProgram, Statement, SwitchCases, VariableDeclaration,
         },
-        ops::{
-            BinaryOperator as AstBinaryOperator, CompoundAssignOperator,
-            UnaryOperator as AstUnaryOperator,
-        },
+        ops::{BinaryOperator as AstBinaryOperator, UnaryOperator as AstUnaryOperator},
         typed_exp::{InnerExp, TypedExp},
     },
     r#const::{INT_ONE, INT_ZERO, T},
@@ -45,6 +42,9 @@ fn convert_op(op: AstUnaryOperator) -> UnaryOperator {
         AstUnaryOperator::Complement => UnaryOperator::Complement,
         AstUnaryOperator::Negate => UnaryOperator::Negate,
         AstUnaryOperator::Not => UnaryOperator::Not,
+        AstUnaryOperator::Incr | AstUnaryOperator::Decr => {
+            panic!("Internal error: should not convert ++/-- directly to TACKY unary ops");
+        }
     }
 }
 
@@ -57,9 +57,9 @@ fn convert_binop(op: AstBinaryOperator) -> BinaryOperator {
         AstBinaryOperator::Mod => BinaryOperator::Mod,
         AstBinaryOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
         AstBinaryOperator::BitwiseOr => BinaryOperator::BitwiseOr,
-        AstBinaryOperator::Xor => BinaryOperator::Xor,
-        AstBinaryOperator::LeftShift => BinaryOperator::LeftShift,
-        AstBinaryOperator::RightShift => BinaryOperator::RightShift,
+        AstBinaryOperator::BitwiseXor => BinaryOperator::Xor,
+        AstBinaryOperator::BitshiftLeft => BinaryOperator::LeftShift,
+        AstBinaryOperator::BitshiftRight => BinaryOperator::RightShift,
         AstBinaryOperator::Equal => BinaryOperator::Equal,
         AstBinaryOperator::NotEqual => BinaryOperator::NotEqual,
         AstBinaryOperator::LessThan => BinaryOperator::LessThan,
@@ -69,21 +69,6 @@ fn convert_binop(op: AstBinaryOperator) -> BinaryOperator {
         AstBinaryOperator::And | AstBinaryOperator::Or => {
             panic!("Internal error, cannot convert these directly to TACKY binops");
         }
-    }
-}
-
-fn convert_compound_assignment_op(op: CompoundAssignOperator) -> BinaryOperator {
-    match op {
-        CompoundAssignOperator::PlusEqual => BinaryOperator::Add,
-        CompoundAssignOperator::MinusEqual => BinaryOperator::Subtract,
-        CompoundAssignOperator::StarEqual => BinaryOperator::Multiply,
-        CompoundAssignOperator::SlashEqual => BinaryOperator::Divide,
-        CompoundAssignOperator::PercentEqual => BinaryOperator::Mod,
-        CompoundAssignOperator::AmpersandEqual => BinaryOperator::BitwiseAnd,
-        CompoundAssignOperator::PipeEqual => BinaryOperator::BitwiseOr,
-        CompoundAssignOperator::CaretEqual => BinaryOperator::Xor,
-        CompoundAssignOperator::LeftShiftEqual => BinaryOperator::LeftShift,
-        CompoundAssignOperator::RightShiftEqual => BinaryOperator::RightShift,
     }
 }
 
@@ -100,16 +85,103 @@ impl TackyGen {
         name
     }
 
+    fn emit_decr(&mut self, op: AstBinaryOperator, v: String) -> (Vec<Instruction>, TackyVal) {
+        let dst_name = self.create_tmp(self.symbol_table.get_type(&v).unwrap());
+        let dst = TackyVal::Var(dst_name);
+        let instrs = vec![
+            Instruction::Copy {
+                src: TackyVal::Var(v.clone()),
+                dst: dst.clone(),
+            },
+            Instruction::Binary {
+                op: convert_binop(op),
+                src1: TackyVal::Var(v.clone()),
+                src2: TackyVal::Constant(T::ConstInt(1)),
+                dst: TackyVal::Var(v),
+            },
+        ];
+        (instrs, dst)
+    }
+
     fn emit_tacky_for_exp(&mut self, exp: TypedExp) -> (Vec<Instruction>, TackyVal) {
         let TypedExp { e, t } = exp;
         match e {
             InnerExp::Constant(c) => (vec![], TackyVal::Constant(c)),
             InnerExp::Var(v) => (vec![], TackyVal::Var(v)),
             InnerExp::Cast { target_type, e } => self.emit_cast_expression(target_type, *e),
+            InnerExp::Unary(AstUnaryOperator::Incr, inner) => {
+                if let TypedExp {
+                    e: InnerExp::Var(v),
+                    ..
+                } = *inner
+                {
+                    self.emit_compound_expression(
+                        AstBinaryOperator::Add,
+                        v.as_str(),
+                        TypedExp {
+                            e: InnerExp::Constant(T::ConstInt(1)),
+                            t,
+                        },
+                    )
+                } else {
+                    panic!("Internal error: bad lvalue")
+                }
+            }
+            InnerExp::Unary(AstUnaryOperator::Decr, inner) => {
+                if let TypedExp {
+                    e: InnerExp::Var(v),
+                    ..
+                } = *inner
+                {
+                    self.emit_compound_expression(
+                        AstBinaryOperator::Subtract,
+                        v.as_str(),
+                        TypedExp {
+                            e: InnerExp::Constant(T::ConstInt(1)),
+                            t,
+                        },
+                    )
+                } else {
+                    panic!("Internal error: bad lvalue")
+                }
+            }
             InnerExp::Unary(op, inner) => self.emit_unary_expression(t, op, *inner),
             InnerExp::Binary(AstBinaryOperator::And, e1, e2) => self.emit_and_expression(*e1, *e2),
             InnerExp::Binary(AstBinaryOperator::Or, e1, e2) => self.emit_or_expression(*e1, *e2),
             InnerExp::Binary(op, e1, e2) => self.emit_binary_expression(t, op, *e1, *e2),
+            InnerExp::CompoundAssign(op, lhs, rhs) => {
+                if let TypedExp {
+                    e: InnerExp::Var(v),
+                    ..
+                } = *lhs
+                {
+                    self.emit_compound_expression(op, &v, *rhs)
+                } else {
+                    panic!("Internal error: bad lvalue")
+                }
+            }
+            InnerExp::PostfixIncrement(inner) => {
+                if let TypedExp {
+                    e: InnerExp::Var(v),
+                    ..
+                } = *inner
+                {
+                    self.emit_decr(AstBinaryOperator::Add, v)
+                } else {
+                    panic!("Internal error: bad lvalue")
+                }
+            }
+            InnerExp::PostfixDecrement(inner) => {
+                if let TypedExp {
+                    e: InnerExp::Var(v),
+                    ..
+                } = *inner
+                {
+                    self.emit_decr(AstBinaryOperator::Subtract, v)
+                } else {
+                    panic!("Internal error: bad lvalue")
+                }
+            }
             InnerExp::Assignment(lhs, rhs) => {
                 if let TypedExp {
                     e: InnerExp::Var(v),
@@ -121,21 +193,6 @@ impl TackyGen {
                     panic!("Internal error: bad lvalue");
                 }
             }
-            InnerExp::CompoundAssign(op, lhs, rhs) => {
-                if let TypedExp {
-                    e: InnerExp::Var(v),
-                    ..
-                } = *lhs
-                {
-                    self.emit_compound_assignment(op, &v, *rhs)
-                } else {
-                    panic!("Internal error: bad lvalue")
-                }
-            }
-            InnerExp::PrefixIncrement(inner) => self.emit_inc_dec(t, *inner, true, false),
-            InnerExp::PrefixDecrement(inner) => self.emit_inc_dec(t, *inner, false, false),
-            InnerExp::PostfixIncrement(inner) => self.emit_inc_dec(t, *inner, true, true),
-            InnerExp::PostfixDecrement(inner) => self.emit_inc_dec(t, *inner, false, true),
             InnerExp::Conditional {
                 condition,
                 then_result,
@@ -321,74 +378,22 @@ impl TackyGen {
         (rhs_instructions, TackyVal::Var(v.to_string()))
     }
 
-    fn emit_compound_assignment(
+    fn emit_compound_expression(
         &mut self,
-        op: CompoundAssignOperator,
+        op: AstBinaryOperator,
         v: &str,
         rhs: TypedExp,
     ) -> (Vec<Instruction>, TackyVal) {
-        let (mut instructions, rhs_result) = self.emit_tacky_for_exp(rhs);
-        let tacky_op = convert_compound_assignment_op(op);
+        let (mut instructions, rhs) = self.emit_tacky_for_exp(rhs);
         let dst = TackyVal::Var(v.to_string());
+        let tacky_op = convert_binop(op);
         instructions.push(Instruction::Binary {
             op: tacky_op,
-            src1: TackyVal::Var(v.to_string()),
-            src2: rhs_result,
+            src1: dst.clone(),
+            src2: rhs,
             dst: dst.clone(),
         });
-        (instructions, TackyVal::Var(v.to_string()))
-    }
-
-    fn emit_inc_dec(
-        &mut self,
-        t: Type,
-        inner: TypedExp,
-        is_inc: bool,
-        is_post: bool,
-    ) -> (Vec<Instruction>, TackyVal) {
-        if let TypedExp {
-            e: InnerExp::Var(v),
-            ..
-        } = inner
-        {
-            let dst = TackyVal::Var(v.clone());
-            let tmp = TackyVal::Var(self.create_tmp(t.clone()));
-            let op = if is_inc {
-                BinaryOperator::Add
-            } else {
-                BinaryOperator::Subtract
-            };
-
-            let one = match t {
-                Type::Int => TackyVal::Constant(INT_ONE),
-                Type::Long => TackyVal::Constant(T::ConstLong(1)),
-                Type::UInt => TackyVal::Constant(T::ConstUInt(1)),
-                Type::ULong => TackyVal::Constant(T::ConstULong(1)),
-                _ => panic!("Internal error: ++/-- can only be applied to variables"),
-            };
-
-            let mut instructions = vec![];
-
-            if is_post {
-                // save the original value in a temporary variable
-                instructions.push(Instruction::Copy {
-                    src: dst.clone(),
-                    dst: tmp.clone(),
-                });
-            }
-
-            instructions.push(Instruction::Binary {
-                op: op,
-                src1: dst.clone(),
-                src2: one,
-                dst: dst.clone(),
-            });
-
-            let result = if is_post { tmp } else { dst };
-            (instructions, result)
-        } else {
-            panic!("Internal error: ++/-- can only be applied to variables");
-        }
+        (instructions, dst)
     }
 
     fn emit_conditional_expression(

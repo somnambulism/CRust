@@ -7,7 +7,7 @@ use crate::library::{
             Block, BlockItem, Declaration, ForInit, FunctionDeclaration, Program, Statement,
             VariableDeclaration,
         },
-        ops::{BinaryOperator, CompoundAssignOperator, UnaryOperator},
+        ops::{BinaryOperator, UnaryOperator},
         storage_class::StorageClass,
         typed_exp::{InnerExp, TypedExp},
         untyped_exp::Exp,
@@ -88,17 +88,11 @@ impl TypeChecker {
             }
             Exp::Unary(op, inner) => self.typecheck_unary(&op, &inner),
             Exp::Binary(op, e1, e2) => self.typecheck_binary(op, e1, e2),
-            Exp::PostfixDecrement(inner) => {
+            Exp::PostfixDecr(inner) => {
                 self.typecheck_increment_decrement(inner, InnerExp::PostfixDecrement)
             }
-            Exp::PostfixIncrement(inner) => {
+            Exp::PostfixIncr(inner) => {
                 self.typecheck_increment_decrement(inner, InnerExp::PostfixIncrement)
-            }
-            Exp::PrefixDecrement(inner) => {
-                self.typecheck_increment_decrement(inner, InnerExp::PrefixDecrement)
-            }
-            Exp::PrefixIncrement(inner) => {
-                self.typecheck_increment_decrement(inner, InnerExp::PrefixIncrement)
             }
             Exp::Assignment(lhs, rhs) => self.typecheck_assignment(lhs, rhs),
             Exp::CompoundAssign(op, lhs, rhs) => self.typecheck_compound_assignment(op, lhs, rhs),
@@ -143,7 +137,7 @@ impl TypeChecker {
                     BinaryOperator::Mod
                     | BinaryOperator::BitwiseAnd
                     | BinaryOperator::BitwiseOr
-                    | BinaryOperator::Xor
+                    | BinaryOperator::BitwiseXor
                         if common_type == Type::Double =>
                     {
                         panic!("Can't apply % or bitwise operations to double");
@@ -155,8 +149,8 @@ impl TypeChecker {
                     | BinaryOperator::Mod
                     | BinaryOperator::BitwiseAnd
                     | BinaryOperator::BitwiseOr
-                    | BinaryOperator::Xor => TypedExp::set_type(binary_exp, common_type),
-                    BinaryOperator::LeftShift | BinaryOperator::RightShift => {
+                    | BinaryOperator::BitwiseXor => TypedExp::set_type(binary_exp, common_type),
+                    BinaryOperator::BitshiftLeft | BinaryOperator::BitshiftRight => {
                         TypedExp::set_type(binary_exp, t1)
                     }
                     _ => TypedExp::set_type(binary_exp, Type::Int),
@@ -183,44 +177,24 @@ impl TypeChecker {
         TypedExp::set_type(assign_exp, lhs_type)
     }
 
-    fn typecheck_compound_assignment(
-        &self,
-        op: &CompoundAssignOperator,
-        lhs: &Exp,
-        rhs: &Exp,
-    ) -> TypedExp {
+    fn typecheck_compound_assignment(&self, op: &BinaryOperator, lhs: &Exp, rhs: &Exp) -> TypedExp {
         let typed_lhs = self.typecheck_exp(lhs);
         let lhs_type = typed_lhs.get_type();
         let typed_rhs = self.typecheck_exp(rhs);
         let rhs_type = typed_rhs.get_type();
+        let converted_rhs =
+            if op == &BinaryOperator::BitshiftLeft || op == &BinaryOperator::BitshiftRight {
+                typed_rhs
+            } else {
+                // We perform usual arithmetic conversions for every compound assignment operator
+                // EXCEPT left/right bitshift
+                let common_type = get_common_type(&lhs_type, &rhs_type);
+                convert_to(typed_rhs, common_type)
+            };
 
-        let common_type = get_common_type(&lhs_type, &rhs_type);
-
-        if common_type == Type::Double
-            && matches!(
-                op,
-                CompoundAssignOperator::PercentEqual
-                    | CompoundAssignOperator::AmpersandEqual
-                    | CompoundAssignOperator::CaretEqual
-                    | CompoundAssignOperator::PipeEqual
-            )
-        {
-            panic!("Can't apply % or bitwise operations to double");
-        }
-
-        if common_type == Type::Double
-            && matches!(
-                op,
-                CompoundAssignOperator::LeftShiftEqual | CompoundAssignOperator::RightShiftEqual
-            )
-        {
-            panic!("Can't apply bit-shifts to double");
-        }
-
-        let converted_rhs = convert_to(typed_rhs, common_type);
-        let assign_exp =
+        let compound_assign_exp =
             InnerExp::CompoundAssign(op.clone(), typed_lhs.into(), converted_rhs.into());
-        TypedExp::set_type(assign_exp, lhs_type)
+        TypedExp::set_type(compound_assign_exp, lhs_type)
     }
 
     fn typecheck_conditional(

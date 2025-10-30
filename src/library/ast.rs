@@ -8,6 +8,8 @@ pub mod ops {
         Complement,
         Negate,
         Not,
+        Incr,
+        Decr,
     }
 
     #[derive(Debug, PartialEq, Clone)]
@@ -19,9 +21,9 @@ pub mod ops {
         Mod,
         BitwiseAnd,
         BitwiseOr,
-        Xor,
-        LeftShift,
-        RightShift,
+        BitwiseXor,
+        BitshiftLeft,
+        BitshiftRight,
         And,
         Or,
         Equal,
@@ -31,25 +33,11 @@ pub mod ops {
         GreaterThan,
         GreaterOrEqual,
     }
-
-    #[derive(Debug, PartialEq, Clone)]
-    pub enum CompoundAssignOperator {
-        PlusEqual,
-        MinusEqual,
-        StarEqual,
-        SlashEqual,
-        PercentEqual,
-        AmpersandEqual,
-        PipeEqual,
-        CaretEqual,
-        LeftShiftEqual,
-        RightShiftEqual,
-    }
 }
 
 // Exp AST definition without type info
 pub mod untyped_exp {
-    use super::ops::{BinaryOperator, CompoundAssignOperator, UnaryOperator};
+    use super::ops::{BinaryOperator, UnaryOperator};
     use crate::library::ast::ExpTrait;
     use crate::library::r#const::T;
     use crate::library::types::Type;
@@ -65,11 +53,9 @@ pub mod untyped_exp {
         Unary(UnaryOperator, Box<Exp>),
         Binary(BinaryOperator, Box<Exp>, Box<Exp>),
         Assignment(Box<Exp>, Box<Exp>),
-        CompoundAssign(CompoundAssignOperator, Box<Exp>, Box<Exp>),
-        PrefixIncrement(Box<Exp>),
-        PrefixDecrement(Box<Exp>),
-        PostfixIncrement(Box<Exp>),
-        PostfixDecrement(Box<Exp>),
+        CompoundAssign(BinaryOperator, Box<Exp>, Box<Exp>),
+        PostfixIncr(Box<Exp>),
+        PostfixDecr(Box<Exp>),
         Conditional {
             condition: Box<Exp>,
             then_result: Box<Exp>,
@@ -89,7 +75,7 @@ pub mod typed_exp {
     use crate::library::{
         ast::{
             ExpTrait,
-            ops::{BinaryOperator, CompoundAssignOperator, UnaryOperator},
+            ops::{BinaryOperator, UnaryOperator},
         },
         r#const::T,
         types::Type,
@@ -106,9 +92,7 @@ pub mod typed_exp {
         Unary(UnaryOperator, Box<TypedExp>),
         Binary(BinaryOperator, Box<TypedExp>, Box<TypedExp>),
         Assignment(Box<TypedExp>, Box<TypedExp>),
-        CompoundAssign(CompoundAssignOperator, Box<TypedExp>, Box<TypedExp>),
-        PrefixIncrement(Box<TypedExp>),
-        PrefixDecrement(Box<TypedExp>),
+        CompoundAssign(BinaryOperator, Box<TypedExp>, Box<TypedExp>),
         PostfixIncrement(Box<TypedExp>),
         PostfixDecrement(Box<TypedExp>),
         Conditional {

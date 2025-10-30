@@ -5,9 +5,7 @@ use crate::library::{
         block_items::{
             Block, BlockItem, Declaration, ForInit, FunctionDeclaration, Program, Statement,
             VariableDeclaration,
-        },
-        storage_class::StorageClass,
-        untyped_exp::Exp,
+        }, ops::UnaryOperator, storage_class::StorageClass, untyped_exp::Exp
     },
     util::unique_ids::MAKE_NAMED_TEMPORARY,
 };
@@ -65,6 +63,42 @@ impl Resolver {
                     )
                 }
             }
+            Exp::CompoundAssign(op, left, right) => {
+                // validate that lhs is an lvalue
+                if let Exp::Var(_) = left.as_ref() {
+                    // recursively process lhs and rhs
+                    return Exp::CompoundAssign(
+                        op.clone(),
+                        Box::new(self.resolve_exp(left)),
+                        Box::new(self.resolve_exp(right)),
+                    );
+                } else {
+                    panic!(
+                        "Expected expression on left-hand side of compound assignment statement, found {:?}",
+                        left
+                    )
+                }
+            }
+            Exp::PostfixIncr(e) => {
+                if let Exp::Var(_) = e.as_ref() {
+                    Exp::PostfixIncr(Box::new(self.resolve_exp(e)))
+                } else {
+                    panic!(
+                        "Operand of postfix increment must be a variable, found {:?}",
+                        e
+                    );
+                }
+            }
+            Exp::PostfixDecr(e) => {
+                if let Exp::Var(_) = e.as_ref() {
+                    Exp::PostfixDecr(Box::new(self.resolve_exp(e)))
+                } else {
+                    panic!(
+                        "Operand of postfix increment must be a variable, found {:?}",
+                        e
+                    );
+                }
+            }
             Exp::Var(v) => {
                 // rename var from map
                 self.id_map.get(v.as_str()).map_or_else(
@@ -77,7 +111,18 @@ impl Resolver {
                 target_type: target_type.clone(),
                 e: self.resolve_exp(e).into(),
             },
-            Exp::Unary(op, e) => Exp::Unary(op.clone(), Box::new(self.resolve_exp(e))),
+            Exp::Unary(op, e) => {
+                // validate prefix ops
+                match op {
+                    UnaryOperator::Incr | UnaryOperator::Decr => {
+                        if !matches!(**e, Exp::Var(_)) {
+                            panic!("operand of ++/-- must be a variable")
+                        }
+                    }
+                    _ => {}
+                }
+                Exp::Unary(op.clone(), Box::new(self.resolve_exp(e)))
+            }
             Exp::Binary(op, e1, e2) => Exp::Binary(
                 op.clone(),
                 Box::new(self.resolve_exp(e1)),
@@ -104,26 +149,6 @@ impl Resolver {
             }
             // Nothing to do for constant
             Exp::Constant(c) => Exp::Constant(c.clone()),
-            Exp::CompoundAssign(op, lhs, rhs) => {
-                // validate that lhs is an lvalue
-                if let Exp::Var(_) = lhs.as_ref() {
-                    // recursively process lhs and rhs
-                    return Exp::CompoundAssign(
-                        op.clone(),
-                        Box::new(self.resolve_exp(lhs)),
-                        Box::new(self.resolve_exp(rhs)),
-                    );
-                } else {
-                    panic!(
-                        "Expected expression on left-hand side of compound assignment statement, found {:?}",
-                        lhs
-                    )
-                }
-            }
-            Exp::PrefixIncrement(e) => Exp::PrefixIncrement(Box::new(self.resolve_exp(e))),
-            Exp::PrefixDecrement(e) => Exp::PrefixDecrement(Box::new(self.resolve_exp(e))),
-            Exp::PostfixIncrement(e) => Exp::PostfixIncrement(Box::new(self.resolve_exp(e))),
-            Exp::PostfixDecrement(e) => Exp::PostfixDecrement(Box::new(self.resolve_exp(e))),
         }
     }
 
