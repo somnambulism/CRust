@@ -92,7 +92,17 @@ pub mod typed_exp {
         Unary(UnaryOperator, Box<TypedExp>),
         Binary(BinaryOperator, Box<TypedExp>, Box<TypedExp>),
         Assignment(Box<TypedExp>, Box<TypedExp>),
-        CompoundAssign(BinaryOperator, Box<TypedExp>, Box<TypedExp>),
+        CompoundAssignment {
+            op: BinaryOperator,
+            lhs: Box<TypedExp>,
+            rhs: Box<TypedExp>,
+            /**
+             * Type of lhs op rhs;
+             * may need to convert lhs to this type before op, and convert result back
+             * to lhs type before assignment
+             */
+            result_t: Type,
+        },
         PostfixIncrement(Box<TypedExp>),
         PostfixDecrement(Box<TypedExp>),
         Conditional {

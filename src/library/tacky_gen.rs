@@ -10,6 +10,7 @@ use crate::library::{
         typed_exp::{InnerExp, TypedExp},
     },
     r#const::{INT_ONE, INT_ZERO, T},
+    const_convert::const_convert,
     initializers::zero,
     symbols::{IdentifierAttrs, InitialValue, SymbolTable},
     tacky::{BinaryOperator, Instruction, Program, TackyVal, TopLevel, UnaryOperator},
@@ -35,6 +36,18 @@ fn case_label(condition: i64, switch_label: String) -> String {
 
 fn default_label(switch_label: String) -> String {
     format!("switch.{}.default", switch_label)
+}
+
+fn mk_const(t: &Type, i: i64) -> T {
+    let as_int = T::ConstInt(i as i32);
+    const_convert(t, &as_int)
+}
+
+fn mk_ast_const(t: &Type, i: i64) -> TypedExp {
+    TypedExp {
+        e: InnerExp::Constant(mk_const(t, i)),
+        t: t.clone(),
+    }
 }
 
 fn convert_op(op: AstUnaryOperator) -> UnaryOperator {
@@ -85,9 +98,16 @@ impl TackyGen {
         name
     }
 
-    fn emit_decr(&mut self, op: AstBinaryOperator, v: String) -> (Vec<Instruction>, TackyVal) {
-        let dst_name = self.create_tmp(self.symbol_table.get_type(&v).unwrap());
-        let dst = TackyVal::Var(dst_name);
+    fn emit_decr(
+        &mut self,
+        op: AstBinaryOperator,
+        inner: TypedExp,
+    ) -> (Vec<Instruction>, TackyVal) {
+        let v = match inner.e {
+            InnerExp::Var(v) => v,
+            _ => panic!("Invalid lvalue for postfix increment/decrement"),
+        };
+        let dst = TackyVal::Var(self.create_tmp(inner.t.clone()));
         let instrs = vec![
             Instruction::Copy {
                 src: TackyVal::Var(v.clone()),
@@ -96,7 +116,7 @@ impl TackyGen {
             Instruction::Binary {
                 op: convert_binop(op),
                 src1: TackyVal::Var(v.clone()),
-                src2: TackyVal::Constant(T::ConstInt(1)),
+                src2: TackyVal::Constant(mk_const(&inner.t, 1)),
                 dst: TackyVal::Var(v),
             },
         ];
@@ -109,78 +129,28 @@ impl TackyGen {
             InnerExp::Constant(c) => (vec![], TackyVal::Constant(c)),
             InnerExp::Var(v) => (vec![], TackyVal::Var(v)),
             InnerExp::Cast { target_type, e } => self.emit_cast_expression(target_type, *e),
-            InnerExp::Unary(AstUnaryOperator::Incr, inner) => {
-                if let TypedExp {
-                    e: InnerExp::Var(v),
-                    ..
-                } = *inner
-                {
-                    self.emit_compound_expression(
-                        AstBinaryOperator::Add,
-                        v.as_str(),
-                        TypedExp {
-                            e: InnerExp::Constant(T::ConstInt(1)),
-                            t,
-                        },
-                    )
-                } else {
-                    panic!("Internal error: bad lvalue")
-                }
+            InnerExp::Unary(AstUnaryOperator::Incr, v) => {
+                self.emit_compound_expression(AstBinaryOperator::Add, *v, mk_ast_const(&t, 1), t)
             }
-            InnerExp::Unary(AstUnaryOperator::Decr, inner) => {
-                if let TypedExp {
-                    e: InnerExp::Var(v),
-                    ..
-                } = *inner
-                {
-                    self.emit_compound_expression(
-                        AstBinaryOperator::Subtract,
-                        v.as_str(),
-                        TypedExp {
-                            e: InnerExp::Constant(T::ConstInt(1)),
-                            t,
-                        },
-                    )
-                } else {
-                    panic!("Internal error: bad lvalue")
-                }
-            }
+            InnerExp::Unary(AstUnaryOperator::Decr, v) => self.emit_compound_expression(
+                AstBinaryOperator::Subtract,
+                *v,
+                mk_ast_const(&t, 1),
+                t,
+            ),
             InnerExp::Unary(op, inner) => self.emit_unary_expression(t, op, *inner),
             InnerExp::Binary(AstBinaryOperator::And, e1, e2) => self.emit_and_expression(*e1, *e2),
             InnerExp::Binary(AstBinaryOperator::Or, e1, e2) => self.emit_or_expression(*e1, *e2),
             InnerExp::Binary(op, e1, e2) => self.emit_binary_expression(t, op, *e1, *e2),
-            InnerExp::CompoundAssign(op, lhs, rhs) => {
-                if let TypedExp {
-                    e: InnerExp::Var(v),
-                    ..
-                } = *lhs
-                {
-                    self.emit_compound_expression(op, &v, *rhs)
-                } else {
-                    panic!("Internal error: bad lvalue")
-                }
-            }
-            InnerExp::PostfixIncrement(inner) => {
-                if let TypedExp {
-                    e: InnerExp::Var(v),
-                    ..
-                } = *inner
-                {
-                    self.emit_decr(AstBinaryOperator::Add, v)
-                } else {
-                    panic!("Internal error: bad lvalue")
-                }
-            }
+            InnerExp::CompoundAssignment {
+                op,
+                lhs,
+                rhs,
+                result_t,
+            } => self.emit_compound_expression(op, *lhs, *rhs, result_t),
+            InnerExp::PostfixIncrement(inner) => self.emit_decr(AstBinaryOperator::Add, *inner),
             InnerExp::PostfixDecrement(inner) => {
-                if let TypedExp {
-                    e: InnerExp::Var(v),
-                    ..
-                } = *inner
-                {
-                    self.emit_decr(AstBinaryOperator::Subtract, v)
-                } else {
-                    panic!("Internal error: bad lvalue")
-                }
+                self.emit_decr(AstBinaryOperator::Subtract, *inner)
             }
             InnerExp::Assignment(lhs, rhs) => {
                 if let TypedExp {
@@ -227,68 +197,79 @@ impl TackyGen {
         inner: TypedExp,
     ) -> (Vec<Instruction>, TackyVal) {
         let (mut eval_inner, result) = self.emit_tacky_for_exp(inner.clone());
-        let inner_type = inner.get_type();
+        let src_type = inner.get_type();
 
-        if inner_type == target_type {
+        if src_type == target_type {
             (eval_inner, result)
         } else {
             let dst_name = self.create_tmp(target_type.clone());
             let dst = TackyVal::Var(dst_name);
-            let cast_instruction = match (target_type.clone(), inner_type.clone()) {
-                (Type::Double, _) => {
-                    if inner_type.is_signed() {
-                        Instruction::IntToDouble {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    } else {
-                        Instruction::UIntToDouble {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    }
-                }
-                (_, Type::Double) => {
-                    if target_type.is_signed() {
-                        Instruction::DoubleToInt {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    } else {
-                        Instruction::DoubleToUInt {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    }
-                }
-                (_, _) => {
-                    // cast b/t int types
-                    if target_type.get_size() == inner_type.get_size() {
-                        Instruction::Copy {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    } else if target_type.get_size() < inner_type.get_size() {
-                        Instruction::Truncate {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    } else if inner_type.is_signed() {
-                        Instruction::SignExtend {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    } else {
-                        Instruction::ZeroExtend {
-                            src: result,
-                            dst: dst.clone(),
-                        }
-                    }
-                }
-            };
+            let cast_instruction =
+                self.get_cast_instruction(result, dst.clone(), src_type, target_type);
 
             eval_inner.push(cast_instruction);
             (eval_inner, dst)
+        }
+    }
+
+    fn get_cast_instruction(
+        &self,
+        src: TackyVal,
+        dst: TackyVal,
+        src_t: Type,
+        dst_t: Type,
+    ) -> Instruction {
+        match (dst_t.clone(), src_t.clone()) {
+            (Type::Double, _) => {
+                if src_t.is_signed() {
+                    Instruction::IntToDouble {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                } else {
+                    Instruction::UIntToDouble {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                }
+            }
+            (_, Type::Double) => {
+                if dst_t.is_signed() {
+                    Instruction::DoubleToInt {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                } else {
+                    Instruction::DoubleToUInt {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                }
+            }
+            (_, _) => {
+                // cast between int types
+                if dst_t.get_size() == src_t.get_size() {
+                    Instruction::Copy {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                } else if dst_t.get_size() < src_t.get_size() {
+                    Instruction::Truncate {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                } else if src_t.is_signed() {
+                    Instruction::SignExtend {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                } else {
+                    Instruction::ZeroExtend {
+                        src: src.clone(),
+                        dst: dst.clone(),
+                    }
+                }
+            }
         }
     }
 
@@ -381,18 +362,54 @@ impl TackyGen {
     fn emit_compound_expression(
         &mut self,
         op: AstBinaryOperator,
-        v: &str,
+        lhs: TypedExp,
         rhs: TypedExp,
+        result_t: Type,
     ) -> (Vec<Instruction>, TackyVal) {
+        // make sure it's an lvalue
+        let v = match lhs.e {
+            InnerExp::Var(v) => v,
+            _ => panic!("bad lvalue in compound assignment or prefix incr/decr"),
+        };
+        // evaluate RHS - type checker already added conversion to common type if one is needed
         let (mut instructions, rhs) = self.emit_tacky_for_exp(rhs);
         let dst = TackyVal::Var(v.to_string());
         let tacky_op = convert_binop(op);
-        instructions.push(Instruction::Binary {
-            op: tacky_op,
-            src1: dst.clone(),
-            src2: rhs,
-            dst: dst.clone(),
-        });
+
+        let operation_and_assignment = if result_t == lhs.t {
+            // result of binary operation already has correct destination type
+            vec![Instruction::Binary {
+                op: tacky_op,
+                src1: dst.clone(),
+                src2: rhs,
+                dst: dst.clone(),
+            }]
+        } else {
+            /*
+             * must convert LHS to op type, then convert result back, so we'll have
+             * tmp = <cast v to result_type>
+             * tmp = tmp op rhs
+             * lhs = <cast tmp to lhs.type>
+             */
+            let tmp = TackyVal::Var(self.create_tmp(result_t.clone()));
+            let cast_lhs_to_tmp = self.get_cast_instruction(
+                dst.clone(),
+                tmp.clone(),
+                lhs.t.clone(),
+                result_t.clone(),
+            );
+            let binary_instr = Instruction::Binary {
+                op: tacky_op,
+                src1: tmp.clone(),
+                src2: rhs,
+                dst: tmp.clone(),
+            };
+
+            let cast_tmp_to_lhs = self.get_cast_instruction(tmp, dst.clone(), result_t, lhs.t);
+            vec![cast_lhs_to_tmp, binary_instr, cast_tmp_to_lhs]
+        };
+
+        instructions.extend(operation_and_assignment);
         (instructions, dst)
     }
 

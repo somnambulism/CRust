@@ -523,10 +523,6 @@ impl Parser {
             if is_assignment(&next_token) {
                 self.tokens.take_token()?;
                 let right = self.parse_expression(prec)?;
-                println!(
-                    "Parsing assignemnt with left: {:?}, right: {:?}",
-                    left, right
-                );
                 left = match get_compound_operator(&next_token) {
                     None => Exp::Assignment(left.into(), right.into()),
                     Some(op) => Exp::CompoundAssign(op, left.into(), right.into()),

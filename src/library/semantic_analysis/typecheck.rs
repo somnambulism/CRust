@@ -121,6 +121,15 @@ impl TypeChecker {
         let typed_e1 = self.typecheck_exp(e1);
         let typed_e2 = self.typecheck_exp(e2);
         match op {
+            BinaryOperator::BitshiftLeft | BinaryOperator::BitshiftRight => {
+                if typed_e1.get_type() == Type::Double || typed_e2.get_type() == Type::Double {
+                    panic!("Both operands of bitshift must be integer type");
+                }
+                // Don't perform usual arithmetic conversions; result has type of left operand
+                let typed_binexp =
+                    InnerExp::Binary(op.clone(), typed_e1.clone().into(), typed_e2.into());
+                TypedExp::set_type(typed_binexp, typed_e1.get_type())
+            }
             BinaryOperator::And | BinaryOperator::Or => {
                 let typed_binexp = InnerExp::Binary(op.clone(), typed_e1.into(), typed_e2.into());
                 TypedExp::set_type(typed_binexp, Type::Int)
@@ -150,9 +159,6 @@ impl TypeChecker {
                     | BinaryOperator::BitwiseAnd
                     | BinaryOperator::BitwiseOr
                     | BinaryOperator::BitwiseXor => TypedExp::set_type(binary_exp, common_type),
-                    BinaryOperator::BitshiftLeft | BinaryOperator::BitshiftRight => {
-                        TypedExp::set_type(binary_exp, t1)
-                    }
                     _ => TypedExp::set_type(binary_exp, Type::Int),
                 }
             }
@@ -182,18 +188,31 @@ impl TypeChecker {
         let lhs_type = typed_lhs.get_type();
         let typed_rhs = self.typecheck_exp(rhs);
         let rhs_type = typed_rhs.get_type();
-        let converted_rhs =
+        if matches!(op, BinaryOperator::Mod |
+            BinaryOperator::BitwiseAnd |
+            BinaryOperator::BitwiseOr |
+            BinaryOperator::BitwiseXor |
+            BinaryOperator::BitshiftLeft |
+            BinaryOperator::BitshiftRight if lhs_type == Type::Double || rhs_type == Type::Double)
+        {
+            panic!("Operator {:?} does not support double operands", op);
+        }
+        let (result_t, converted_rhs) =
             if op == &BinaryOperator::BitshiftLeft || op == &BinaryOperator::BitshiftRight {
-                typed_rhs
+                (lhs_type.clone(), typed_rhs)
             } else {
                 // We perform usual arithmetic conversions for every compound assignment operator
                 // EXCEPT left/right bitshift
                 let common_type = get_common_type(&lhs_type, &rhs_type);
-                convert_to(typed_rhs, common_type)
+                (common_type.clone(), convert_to(typed_rhs, common_type))
             };
 
-        let compound_assign_exp =
-            InnerExp::CompoundAssign(op.clone(), typed_lhs.into(), converted_rhs.into());
+        let compound_assign_exp = InnerExp::CompoundAssignment {
+            op: op.clone(),
+            lhs: typed_lhs.into(),
+            rhs: converted_rhs.into(),
+            result_t,
+        };
         TypedExp::set_type(compound_assign_exp, lhs_type)
     }
 
