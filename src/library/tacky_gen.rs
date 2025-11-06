@@ -534,13 +534,13 @@ impl TackyGen {
                 instructions
             }
             Statement::Null => vec![],
-            Statement::Labelled { label, statement } => {
-                let mut instructions = self.emit_tacky_for_statement(*statement);
-                instructions.insert(0, Instruction::Label(label));
+            Statement::LabelledStatement(lbl, stmt) => {
+                let mut instructions = self.emit_tacky_for_statement(*stmt);
+                instructions.insert(0, Instruction::Label(lbl));
                 instructions
             }
-            Statement::Goto(label) => {
-                vec![Instruction::Jump(label)]
+            Statement::Goto(lbl) => {
+                vec![Instruction::Jump(lbl)]
             }
         }
     }

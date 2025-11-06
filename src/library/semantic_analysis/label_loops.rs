@@ -168,12 +168,9 @@ impl LoopsLabeller {
                     panic!("Default outside of switch");
                 }
             }
-            Statement::Labelled { label, statement } => {
+            Statement::LabelledStatement(label, statement) => {
                 let labelled_statement = self.label_statement(*statement);
-                Statement::Labelled {
-                    label,
-                    statement: labelled_statement.into(),
-                }
+                Statement::LabelledStatement(label, labelled_statement.into())
             }
             Statement::Null
             | Statement::Return(_)

@@ -429,12 +429,10 @@ impl TypeChecker {
                     id: id.clone(),
                 }
             }
-            Statement::Labelled {
-                label, statement, ..
-            } => Statement::Labelled {
-                label: label.clone(),
-                statement: self.typecheck_statement(ret_type, statement).into(),
-            },
+            Statement::LabelledStatement(lbl, stmt, ..) => Statement::LabelledStatement(
+                lbl.clone(),
+                self.typecheck_statement(ret_type, &stmt).into(),
+            ),
             Statement::Null => Statement::Null,
             Statement::Break(s) => Statement::Break(s.to_string()),
             Statement::Continue(s) => Statement::Continue(s.to_string()),

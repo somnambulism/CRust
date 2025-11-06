@@ -213,10 +213,7 @@ pub mod block_items {
             switch_label: String,
         },
         Null,
-        Labelled {
-            label: String,
-            statement: Box<Statement<Exp>>,
-        },
+        LabelledStatement (String, Box<Statement<Exp>>),
         Goto(String),
     }
 

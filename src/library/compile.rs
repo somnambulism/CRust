@@ -9,9 +9,9 @@ use crate::library::tacky_gen::TackyGen;
 use crate::library::{emit::CodeEmitter, lex::Lexer, parse::Parser, settings::current_platform};
 
 use super::semantic_analysis::label_loops::LoopsLabeller;
-use super::semantic_analysis::labels::resolve_labels;
 use super::semantic_analysis::resolve::Resolver;
 use super::semantic_analysis::typecheck::TypeChecker;
+use super::semantic_analysis::validate_labels::validate_labels;
 use super::{
     backend::{instruction_fixup, replace_pseudos},
     settings::Stage,
@@ -41,17 +41,17 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
     }
 
     // Semantic analysis
-    // 1. Label gotos
-    let labelled_ast = resolve_labels(ast);
-    // 2. Resolve identifiers
+    // 1. Resolve identifiers
     let mut variable_resolver = Resolver::new();
-    let resolved_ast = variable_resolver.resolve(labelled_ast);
+    let ast = variable_resolver.resolve(ast);
+    // 2. Label gotos
+    let ast = validate_labels(ast).unwrap();
     // 3. Annotate loops and break/continue statements
     let mut loops_labeller = LoopsLabeller::new();
-    let annotated_ast = loops_labeller.label_loops(resolved_ast);
+    let ast = loops_labeller.label_loops(ast);
     // 4. Typecheck definitions and uses of functions and variables
     let mut typeckecher = TypeChecker::new();
-    let typed_ast = typeckecher.typecheck(&annotated_ast);
+    let ast = typeckecher.typecheck(&ast);
 
     if *stage == Stage::Validate {
         return;
@@ -59,7 +59,7 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
 
     // Convert the AST to TACKY
     let mut tacky_generator = TackyGen::new(typeckecher.symbol_table);
-    let tacky = tacky_generator.generate(typed_ast);
+    let tacky = tacky_generator.generate(ast);
     if debug {
         let mut tacky_filename = PathBuf::from(src_file);
         tacky_filename.set_extension("debug.tacky");

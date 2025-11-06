@@ -659,8 +659,8 @@ impl Parser {
 
     // <statement> ::= "return" <exp> ";"
     //              | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
-    //              | "goto" <identifier> ";"
-    //              | <identifier> ":" <statement>
+    //              | <label> ":" <statement> ";"
+    //              | "goto" <label> ";"
     //              | <block>
     //              | <break> ";"
     //              | <continue> ";"
@@ -673,71 +673,37 @@ impl Parser {
     //              | <exp> ";"
     //              | ";"
     fn parse_statement(&mut self) -> Result<Statement<Exp>, String> {
-        match self.tokens.peek() {
-            // "return" <exp> ";"
-            Ok(Token::KWReturn) => {
+        match self.tokens.npeek(2) {
+            [Token::KWIf, _] => self.parse_if_statement(),
+            [Token::OpenBrace, _] => Ok(Statement::Compound(self.parse_block()?)),
+            [Token::KWDo, _] => self.parse_do_loop(),
+            [Token::KWWhile, _] => self.parse_while_loop(),
+            [Token::KWFor, _] => self.parse_for_loop(),
+            [Token::KWBreak, _] => {
+                self.tokens.take_token()?;
+                self.expect(Token::Semicolon)?;
+                Ok(Statement::Break("".to_string()))
+            }
+            [Token::KWContinue, _] => {
+                self.tokens.take_token()?;
+                self.expect(Token::Semicolon)?;
+                Ok(Statement::Continue("".to_string()))
+            }
+            [Token::KWReturn, _] => {
                 // consume return keyword
                 self.tokens.take_token()?;
                 let exp = self.parse_expression(0)?;
                 self.expect(Token::Semicolon)?;
                 Ok(Statement::Return(exp))
             }
-            // "if" "(" <exp> ")" <statement> [ "else" <statement> ]
-            Ok(Token::KWIf) => {
-                // if statement - consume if keyword
+            [Token::KWGoto, _] => {
                 self.tokens.take_token()?;
-                self.expect(Token::OpenParen)?;
-                let condition = self.parse_expression(0)?;
-                self.expect(Token::CloseParen)?;
-                let then_clause = self.parse_statement()?;
-                let else_clause = if let Ok(Token::KWElse) = self.tokens.peek() {
-                    // there is an else clause - consume the else keyword
-                    self.tokens.take_token()?;
-
-                    Some(Box::new(self.parse_statement()?))
-                } else {
-                    // there's no else clause
-                    None
-                };
-                Ok(Statement::If {
-                    condition,
-                    then_clause: then_clause.into(),
-                    else_clause,
-                })
+                let lbl = self.parse_id()?;
+                self.expect(Token::Semicolon)?;
+                Ok(Statement::Goto(lbl))
             }
-            // "switch" "(" <exp> ")" <statement>
-            Ok(Token::KWSwitch) => {
-                // consume switch keyword
-                self.tokens.take_token()?;
-                self.expect(Token::OpenParen)?;
-                let condition = self.parse_expression(0)?;
-                self.expect(Token::CloseParen)?;
-                let body = Box::new(self.parse_statement()?);
-                Ok(Statement::Switch {
-                    condition,
-                    body,
-                    cases: HashSet::new(),
-                    id: "".to_string(),
-                })
-            }
-            // labelled statement
-            Ok(Token::Identifier(_)) => {
-                if self.tokens.peek_nth(1)? == &Token::Colon {
-                    let label = self.parse_id()?;
-                    self.expect(Token::Colon)?;
-                    let statement = self.parse_statement()?;
-                    Ok(Statement::Labelled {
-                        label: label.clone(),
-                        statement: Box::new(statement),
-                    })
-                } else {
-                    let exp = self.parse_expression(0)?;
-                    self.expect(Token::Semicolon)?;
-                    Ok(Statement::Expression(exp))
-                }
-            }
-            // "case" <int> ":" <statement>
-            Ok(Token::KWCase) => {
+            [Token::KWSwitch, _] => self.parse_switch_statement(),
+            [Token::KWCase, _] => {
                 self.tokens.take_token()?;
                 let condition = match self.tokens.take_token()? {
                     Token::ConstInt(c)
@@ -756,8 +722,7 @@ impl Parser {
                     switch_label: "".to_string(),
                 })
             }
-            // "default" ":"
-            Ok(Token::KWDefault) => {
+            [Token::KWDefault, _] => {
                 self.tokens.take_token()?;
                 self.expect(Token::Colon)?;
                 let body = Box::new(self.parse_statement()?);
@@ -766,76 +731,20 @@ impl Parser {
                     switch_label: "".to_string(),
                 })
             }
-            // "goto" <identifier> ";"
-            Ok(Token::KWGoto) => {
-                self.tokens.take_token()?;
-                let label = self.parse_id()?;
-                self.expect(Token::Semicolon)?;
-                Ok(Statement::Goto(label))
+            [Token::Identifier(_), Token::Colon] => {
+                // consume label
+                let tok = self.tokens.take_token()?;
+                let lbl = match tok {
+                    Token::Identifier(name) => name,
+                    other => {
+                        return Err(format!("Expected identifier, found {:?}", other));
+                    }
+                };
+                self.tokens.take_token()?; // consume colon
+                let stmt = self.parse_statement()?;
+                Ok(Statement::LabelledStatement(lbl, Box::new(stmt)))
             }
-            Ok(Token::OpenBrace) => Ok(Statement::Compound(self.parse_block()?)),
-            // "break" ";"
-            Ok(Token::KWBreak) => {
-                // consume break keyword
-                self.tokens.take_token()?;
-                self.expect(Token::Semicolon)?;
-                Ok(Statement::Break("".to_string()))
-            }
-            // "continue" ";"
-            Ok(Token::KWContinue) => {
-                // consume continue keyword
-                self.tokens.take_token()?;
-                self.expect(Token::Semicolon)?;
-                Ok(Statement::Continue("".to_string()))
-            }
-            // "while" "(" <exp> ")" <statement>
-            Ok(Token::KWWhile) => {
-                // consume while keyword
-                self.tokens.take_token()?;
-                self.expect(Token::OpenParen)?;
-                let condition = self.parse_expression(0)?;
-                self.expect(Token::CloseParen)?;
-                let body = Box::new(self.parse_statement()?);
-                Ok(Statement::While {
-                    condition,
-                    body,
-                    id: "".to_string(),
-                })
-            }
-            // "do" <statement> "while" "(" <exp> ")" ";"
-            Ok(Token::KWDo) => {
-                // consume do keyword
-                self.tokens.take_token()?;
-                let body = Box::new(self.parse_statement()?);
-                self.expect(Token::KWWhile)?;
-                self.expect(Token::OpenParen)?;
-                let condition = self.parse_expression(0)?;
-                self.expect(Token::CloseParen)?;
-                self.expect(Token::Semicolon)?;
-                Ok(Statement::DoWhile {
-                    body,
-                    condition,
-                    id: "".to_string(),
-                })
-            }
-            // "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement>
-            Ok(Token::KWFor) => {
-                self.expect(Token::KWFor)?;
-                self.expect(Token::OpenParen)?;
-                let init = self.parse_for_init()?;
-                let condition = self.parse_optional_exp(Token::Semicolon)?;
-                let post = self.parse_optional_exp(Token::CloseParen)?;
-                let body = Box::new(self.parse_statement()?);
-                Ok(Statement::For {
-                    init,
-                    condition,
-                    post,
-                    body,
-                    id: "".to_string(),
-                })
-            }
-            // <exp> ";" | ";"
-            Ok(_) => {
+            _ => {
                 let exp = self.parse_optional_exp(Token::Semicolon)?;
                 if let Some(e) = exp {
                     Ok(Statement::Expression(e))
@@ -843,11 +752,93 @@ impl Parser {
                     Ok(Statement::Null)
                 }
             }
-            _ => {
-                // No tokens left
-                return Err("No tokens left".to_string());
-            }
         }
+    }
+
+    // "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+    fn parse_if_statement(&mut self) -> Result<Statement<Exp>, String> {
+        self.expect(Token::KWIf)?;
+        self.expect(Token::OpenParen)?;
+        let condition = self.parse_expression(0)?;
+        self.expect(Token::CloseParen)?;
+        let then_clause = self.parse_statement()?;
+
+        let else_clause = if let Ok(Token::KWElse) = self.tokens.peek() {
+            // there is an else clause - consume the else keyword
+            self.tokens.take_token()?;
+            Some(Box::new(self.parse_statement()?))
+        } else {
+            // there's no else clause
+            None
+        };
+
+        Ok(Statement::If {
+            condition,
+            then_clause: then_clause.into(),
+            else_clause,
+        })
+    }
+
+    // "do" <statement> "while" "(" <exp> ")" ";"
+    fn parse_do_loop(&mut self) -> Result<Statement<Exp>, String> {
+        self.expect(Token::KWDo)?;
+        let body = Box::new(self.parse_statement()?);
+        self.expect(Token::KWWhile)?;
+        self.expect(Token::OpenParen)?;
+        let condition = self.parse_expression(0)?;
+        self.expect(Token::CloseParen)?;
+        self.expect(Token::Semicolon)?;
+        Ok(Statement::DoWhile {
+            body,
+            condition,
+            id: "".to_string(),
+        })
+    }
+
+    // "while" "(" <exp> ")" <statement>
+    fn parse_while_loop(&mut self) -> Result<Statement<Exp>, String> {
+        self.expect(Token::KWWhile)?;
+        self.expect(Token::OpenParen)?;
+        let condition = self.parse_expression(0)?;
+        self.expect(Token::CloseParen)?;
+        let body = Box::new(self.parse_statement()?);
+        Ok(Statement::While {
+            condition,
+            body,
+            id: "".to_string(),
+        })
+    }
+
+    // "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement>
+    fn parse_for_loop(&mut self) -> Result<Statement<Exp>, String> {
+        self.expect(Token::KWFor)?;
+        self.expect(Token::OpenParen)?;
+        let init = self.parse_for_init()?;
+        let condition = self.parse_optional_exp(Token::Semicolon)?;
+        let post = self.parse_optional_exp(Token::CloseParen)?;
+        let body = Box::new(self.parse_statement()?);
+        Ok(Statement::For {
+            init,
+            condition,
+            post,
+            body,
+            id: "".to_string(),
+        })
+    }
+
+    // "switch" "(" <exp> ")" <statement>
+    fn parse_switch_statement(&mut self) -> Result<Statement<Exp>, String> {
+        self.expect(Token::KWSwitch)?;
+        self.expect(Token::OpenParen)?;
+        let control = self.parse_expression(0)?;
+        self.expect(Token::CloseParen)?;
+        let body = Box::new(self.parse_statement()?);
+        Ok(Statement::Switch {
+            condition: control,
+            body,
+            cases: HashSet::new(),
+            id: "".to_string(),
+        })
     }
 
     // <block_item> ::= <statement> | <declaration>
@@ -960,10 +951,10 @@ mod tests {
         ]);
         assert_eq!(
             parser.parse_statement().unwrap(),
-            Statement::Labelled {
-                label: "label".to_string(),
-                statement: Box::new(Statement::Return(Exp::Constant(T::ConstInt(42)))),
-            }
+            Statement::LabelledStatement(
+                "label".to_string(),
+                Box::new(Statement::Return(Exp::Constant(T::ConstInt(42)))),
+            )
         );
     }
 

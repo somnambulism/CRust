@@ -5,7 +5,10 @@ use crate::library::{
         block_items::{
             Block, BlockItem, Declaration, ForInit, FunctionDeclaration, Program, Statement,
             VariableDeclaration,
-        }, ops::UnaryOperator, storage_class::StorageClass, untyped_exp::Exp
+        },
+        ops::UnaryOperator,
+        storage_class::StorageClass,
+        untyped_exp::Exp,
     },
     util::unique_ids::MAKE_NAMED_TEMPORARY,
 };
@@ -313,10 +316,9 @@ impl Resolver {
                 switch_label,
             },
             Statement::Null | Statement::Break(_) | Statement::Continue(_) => statement,
-            Statement::Labelled { label, statement } => Statement::Labelled {
-                label,
-                statement: self.resolve_statement(*statement).into(),
-            },
+            Statement::LabelledStatement(lbl, stmt) => {
+                Statement::LabelledStatement(lbl, self.resolve_statement(*stmt).into())
+            }
             _ => statement,
         }
     }
