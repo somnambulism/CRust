@@ -292,29 +292,22 @@ impl Resolver {
                 Statement::Compound(resolved)
             }
             Statement::Switch {
-                condition,
+                control,
                 body,
                 cases,
                 id,
             } => Statement::Switch {
-                condition: self.resolve_exp(&condition),
+                control: self.resolve_exp(&control),
                 body: self.resolve_statement(*body).into(),
                 cases,
                 id,
             },
-            Statement::Case {
-                condition,
-                body,
-                switch_label,
-            } => Statement::Case {
-                condition,
-                body: self.resolve_statement(*body).into(),
-                switch_label,
-            },
-            Statement::Default { body, switch_label } => Statement::Default {
-                body: self.resolve_statement(*body).into(),
-                switch_label,
-            },
+            Statement::Case(v, stmt, id) => {
+                Statement::Case(v, self.resolve_statement(*stmt).into(), id)
+            }
+            Statement::Default(stmt, id) => {
+                Statement::Default(self.resolve_statement(*stmt).into(), id)
+            }
             Statement::Null | Statement::Break(_) | Statement::Continue(_) => statement,
             Statement::LabelledStatement(lbl, stmt) => {
                 Statement::LabelledStatement(lbl, self.resolve_statement(*stmt).into())

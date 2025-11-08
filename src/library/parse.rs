@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     mem::{Discriminant, discriminant},
 };
 
@@ -705,31 +705,16 @@ impl Parser {
             [Token::KWSwitch, _] => self.parse_switch_statement(),
             [Token::KWCase, _] => {
                 self.tokens.take_token()?;
-                let condition = match self.tokens.take_token()? {
-                    Token::ConstInt(c)
-                    | Token::ConstLong(c)
-                    | Token::ConstUInt(c)
-                    | Token::ConstULong(c) => c.to_i64().unwrap(),
-                    other => {
-                        return Err(format!("Expected a constant, found {:?}", other));
-                    }
-                };
+                let case_val = self.parse_expression(0)?;
                 self.expect(Token::Colon)?;
-                let body = Box::new(self.parse_statement()?);
-                Ok(Statement::Case {
-                    condition,
-                    body,
-                    switch_label: "".to_string(),
-                })
+                let stmt = Box::new(self.parse_statement()?);
+                Ok(Statement::Case(case_val, stmt, "".to_string()))
             }
             [Token::KWDefault, _] => {
                 self.tokens.take_token()?;
                 self.expect(Token::Colon)?;
-                let body = Box::new(self.parse_statement()?);
-                Ok(Statement::Default {
-                    body,
-                    switch_label: "".to_string(),
-                })
+                let stmt = Box::new(self.parse_statement()?);
+                Ok(Statement::Default(stmt, "".to_string()))
             }
             [Token::Identifier(_), Token::Colon] => {
                 // consume label
@@ -834,9 +819,9 @@ impl Parser {
         self.expect(Token::CloseParen)?;
         let body = Box::new(self.parse_statement()?);
         Ok(Statement::Switch {
-            condition: control,
+            control,
             body,
-            cases: HashSet::new(),
+            cases: Vec::new(),
             id: "".to_string(),
         })
     }

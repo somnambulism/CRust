@@ -5,11 +5,12 @@ use std::{
 };
 
 use crate::library::backend::codegen::CodeGen;
+use crate::library::semantic_analysis::collect_switch_cases::analyze_switches;
 use crate::library::tacky_gen::TackyGen;
 use crate::library::{emit::CodeEmitter, lex::Lexer, parse::Parser, settings::current_platform};
 
 use super::semantic_analysis::label_loops::LoopsLabeller;
-use super::semantic_analysis::resolve::Resolver;
+use super::semantic_analysis::identifier_resolution::Resolver;
 use super::semantic_analysis::typecheck::TypeChecker;
 use super::semantic_analysis::validate_labels::validate_labels;
 use super::{
@@ -52,6 +53,8 @@ pub fn compile(stage: &Stage, src_file: &str, debug: bool) {
     // 4. Typecheck definitions and uses of functions and variables
     let mut typeckecher = TypeChecker::new();
     let ast = typeckecher.typecheck(&ast);
+    // 5. Collect cases in switch statements (need to typecheck first)
+    let ast = analyze_switches(ast).unwrap();
 
     if *stage == Stage::Validate {
         return;

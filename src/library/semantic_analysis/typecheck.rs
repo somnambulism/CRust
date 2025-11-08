@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::HashSet, iter::zip, ops::Rem};
+use std::iter::zip;
 
 use crate::library::{
     ast::{
@@ -326,61 +326,43 @@ impl TypeChecker {
                     .as_ref()
                     .map(|e| self.typecheck_statement(&ret_type, e).into()),
             },
+            Statement::LabelledStatement(lbl, stmt, ..) => Statement::LabelledStatement(
+                lbl.clone(),
+                self.typecheck_statement(ret_type, &stmt).into(),
+            ),
+            Statement::Case(e, s, id) => {
+                let typed_e = self.typecheck_exp(&e);
+                if typed_e.get_type() == Type::Double {
+                    panic!("Case expression cannot be double");
+                } else {
+                    Statement::Case(
+                        typed_e,
+                        self.typecheck_statement(ret_type, s).into(),
+                        id.clone(),
+                    )
+                }
+            }
+            Statement::Default(s, id) => {
+                Statement::Default(self.typecheck_statement(&ret_type, s).into(), id.clone())
+            }
             Statement::Switch {
-                condition,
+                control,
                 body,
                 cases,
                 id,
             } => {
-                let typed_condition = self.typecheck_exp(condition);
-                let switch_type = typed_condition.get_type();
-
-                // Check and convert all case-constants to type of the switch
-                let mut converted_cases = HashSet::new();
-                for case in cases {
-                    if let Some(value) = case {
-                        // Convert value to type of the switch expression
-                        let converted_value = match switch_type {
-                            Type::Int | Type::UInt => (*value).rem(0x100000000) as i64, // 2^32
-                            Type::Long | Type::ULong => *value,
-                            _ => panic!("Switch condition must be integer type"),
-                        };
-
-                        // Check for duplicates after convert
-                        if converted_cases.contains(&Some(converted_value)) {
-                            panic!(
-                                "Duplicate case value {} after type conversion",
-                                converted_value
-                            );
-                        }
-
-                        converted_cases.insert(Some(converted_value));
-                    } else {
-                        // default case
-                        converted_cases.insert(None);
+                let typed_control = self.typecheck_exp(control);
+                if typed_control.get_type() == Type::Double {
+                    panic!("Switch control expression cannot be double");
+                } else {
+                    Statement::Switch {
+                        control: typed_control,
+                        body: self.typecheck_statement(ret_type, &body).into(),
+                        id: id.clone(),
+                        cases: cases.clone(),
                     }
                 }
-
-                Statement::Switch {
-                    condition: typed_condition,
-                    body: self.typecheck_statement(&ret_type, body).into(),
-                    cases: cases.clone(),
-                    id: id.clone(),
-                }
             }
-            Statement::Case {
-                condition,
-                body,
-                switch_label,
-            } => Statement::Case {
-                condition: *condition,
-                body: self.typecheck_statement(&ret_type, body).into(),
-                switch_label: switch_label.clone(),
-            },
-            Statement::Default { body, switch_label } => Statement::Default {
-                body: self.typecheck_statement(&ret_type, body).into(),
-                switch_label: switch_label.clone(),
-            },
             Statement::Compound(block) => {
                 Statement::Compound(self.typecheck_block(&ret_type, block))
             }
@@ -429,10 +411,6 @@ impl TypeChecker {
                     id: id.clone(),
                 }
             }
-            Statement::LabelledStatement(lbl, stmt, ..) => Statement::LabelledStatement(
-                lbl.clone(),
-                self.typecheck_statement(ret_type, &stmt).into(),
-            ),
             Statement::Null => Statement::Null,
             Statement::Break(s) => Statement::Break(s.to_string()),
             Statement::Continue(s) => Statement::Continue(s.to_string()),

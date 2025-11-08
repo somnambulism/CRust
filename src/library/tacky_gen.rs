@@ -4,7 +4,7 @@ use crate::library::{
     ast::{
         block_items::{
             Block, BlockItem, Declaration, ForInit, FunctionDeclaration as AstFunction,
-            Program as AstProgram, Statement, SwitchCases, VariableDeclaration,
+            Program as AstProgram, Statement, VariableDeclaration,
         },
         ops::{BinaryOperator as AstBinaryOperator, UnaryOperator as AstUnaryOperator},
         typed_exp::{InnerExp, TypedExp},
@@ -28,14 +28,6 @@ fn break_label(label: String) -> String {
 
 fn continue_label(label: String) -> String {
     format!("continue.{}", label)
-}
-
-fn case_label(condition: i64, switch_label: String) -> String {
-    format!("switch.{}.case.{}", switch_label, condition)
-}
-
-fn default_label(switch_label: String) -> String {
-    format!("switch.{}.default", switch_label)
 }
 
 fn mk_const(t: &Type, i: i64) -> T {
@@ -513,26 +505,22 @@ impl TackyGen {
                 body,
                 id,
             } => self.emit_tacky_for_for_loop(init, condition, post, *body, id),
+            Statement::Case(_, stmt, id) => {
+                let mut instructions = self.emit_tacky_for_statement(*stmt);
+                instructions.insert(0, Instruction::Label(id));
+                instructions
+            }
+            Statement::Default(stmt, id) => {
+                let mut instructions = self.emit_tacky_for_statement(*stmt);
+                instructions.insert(0, Instruction::Label(id));
+                instructions
+            }
             Statement::Switch {
-                condition,
+                control,
                 body,
-                cases,
                 id,
-            } => self.emit_tacky_for_switch(condition, *body, cases, id),
-            Statement::Case {
-                condition,
-                body,
-                switch_label,
-            } => {
-                let mut instructions = self.emit_tacky_for_statement(*body);
-                instructions.insert(0, Instruction::Label(case_label(condition, switch_label)));
-                instructions
-            }
-            Statement::Default { body, switch_label } => {
-                let mut instructions = self.emit_tacky_for_statement(*body);
-                instructions.insert(0, Instruction::Label(default_label(switch_label)));
-                instructions
-            }
+                cases,
+            } => self.emit_tacky_for_switch(control, *body, id, cases),
             Statement::Null => vec![],
             Statement::LabelledStatement(lbl, stmt) => {
                 let mut instructions = self.emit_tacky_for_statement(*stmt);
@@ -700,50 +688,50 @@ impl TackyGen {
 
     fn emit_tacky_for_switch(
         &mut self,
-        condition: TypedExp,
+        control: TypedExp,
         body: Statement<TypedExp>,
-        cases: SwitchCases,
         id: String,
+        cases: Vec<(Option<T>, String)>,
     ) -> Vec<Instruction> {
-        let mut instructions = vec![];
         let br_label = break_label(id.clone());
-        let (eval_condition, c) = self.emit_tacky_for_exp(condition.clone());
-        instructions.extend(eval_condition);
+        let (eval_control, c) = self.emit_tacky_for_exp(control.clone());
+        let cmp_result = TackyVal::Var(self.create_tmp(control.get_type()));
 
-        for case in &cases {
-            if let Some(value) = case {
-                let temp_var_name = self.create_tmp(condition.get_type());
-                let temp_var = TackyVal::Var(temp_var_name);
-                let src2 = match condition.get_type() {
-                    Type::Int => TackyVal::Constant(T::ConstInt(*value as i32)),
-                    Type::Long => TackyVal::Constant(T::ConstLong(*value)),
-                    Type::UInt => TackyVal::Constant(T::ConstUInt(*value as u32)),
-                    Type::ULong => TackyVal::Constant(T::ConstULong(*value as u64)),
-                    _ => panic!("switch condition should be int or long"),
-                };
-                instructions.push(Instruction::Binary {
-                    op: BinaryOperator::Equal,
-                    src1: c.clone(),
-                    src2: src2,
-                    dst: temp_var.clone(),
-                });
-                instructions.push(Instruction::JumpIfNotZero(
-                    temp_var,
-                    case_label(*value, id.clone()),
-                ))
+        let emit_tacky_for_case = |key: &Option<T>, id: &String| -> Vec<Instruction> {
+            match key {
+                Some(i) => vec![
+                    Instruction::Binary {
+                        op: BinaryOperator::Equal,
+                        src1: TackyVal::Constant(i.clone()),
+                        src2: c.clone(),
+                        dst: cmp_result.clone(),
+                    },
+                    Instruction::JumpIfNotZero(cmp_result.clone(), id.clone()),
+                ],
+                None => vec![],
             }
-        }
+        };
 
-        if cases.contains(&None) {
-            instructions.push(Instruction::Jump(default_label(id.clone())));
-        } else {
-            instructions.push(Instruction::Jump(br_label.clone()));
-        }
+        let jump_to_cases: Vec<Instruction> = cases
+            .iter()
+            .flat_map(|(key, id)| emit_tacky_for_case(key, id))
+            .collect();
 
-        instructions.extend(self.emit_tacky_for_statement(body));
-        instructions.push(Instruction::Label(br_label));
+        let default_tacky =
+            if let Some((_, default_id)) = cases.iter().find(|(key, _)| key.is_none()) {
+                vec![Instruction::Jump(default_id.clone())]
+            } else {
+                vec![]
+            };
 
-        instructions
+        eval_control
+            .into_iter()
+            .chain(jump_to_cases)
+            .chain(default_tacky)
+            .chain(vec![Instruction::Jump(br_label.clone())])
+            .chain(self.emit_tacky_for_statement(body))
+            .chain(vec![Instruction::Label(br_label)])
+            .collect()
     }
 
     fn emit_fun_declaration(&mut self, fun_decl: Declaration<TypedExp>) -> Option<TopLevel> {

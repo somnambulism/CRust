@@ -108,34 +108,26 @@ impl LabelsResolver {
                 })
             }
             Statement::Switch {
-                condition,
+                control,
                 body,
                 cases,
                 id,
             } => {
                 let body = Box::new(self.collect_labels_from_statement(*body)?);
                 Ok(Statement::Switch {
-                    condition,
+                    control,
                     body,
                     cases,
                     id,
                 })
             }
-            Statement::Case {
-                condition,
-                body,
-                switch_label,
-            } => {
-                let body = Box::new(self.collect_labels_from_statement(*body)?);
-                Ok(Statement::Case {
-                    condition,
-                    body,
-                    switch_label,
-                })
+            Statement::Case(v, stmt, id) => {
+                let stmt = Box::new(self.collect_labels_from_statement(*stmt)?);
+                Ok(Statement::Case(v, stmt, id))
             }
-            Statement::Default { body, switch_label } => {
-                let body = Box::new(self.collect_labels_from_statement(*body)?);
-                Ok(Statement::Default { body, switch_label })
+            Statement::Default(stmt, id) => {
+                let stmt = Box::new(self.collect_labels_from_statement(*stmt)?);
+                Ok(Statement::Default(stmt, id))
             }
             Statement::Return(_)
             | Statement::Null

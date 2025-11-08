@@ -146,9 +146,7 @@ pub mod storage_class {
 }
 
 pub mod block_items {
-    use std::collections::HashSet;
-
-    use crate::library::types::Type;
+    use crate::library::{r#const::T, types::Type};
 
     use super::{ExpTrait, storage_class::StorageClass};
 
@@ -165,8 +163,6 @@ pub mod block_items {
         InitDecl(VariableDeclaration<Exp>),
         InitExp(Option<Exp>),
     }
-
-    pub type SwitchCases = HashSet<Option<i64>>;
 
     #[derive(Debug, PartialEq)]
     pub enum Statement<Exp: ExpTrait> {
@@ -198,22 +194,19 @@ pub mod block_items {
             id: String,
         },
         Switch {
-            condition: Exp,
+            control: Exp,
             body: Box<Statement<Exp>>,
-            cases: SwitchCases,
             id: String,
+            cases: Vec<(Option<T>, String)>,
         },
-        Case {
-            condition: i64,
-            body: Box<Statement<Exp>>,
-            switch_label: String,
-        },
-        Default {
-            body: Box<Statement<Exp>>,
-            switch_label: String,
-        },
+        Case(
+            Exp, // exp must be constant; validate during semantic analysis
+            Box<Statement<Exp>>,
+            String,
+        ),
+        Default(Box<Statement<Exp>>, String),
         Null,
-        LabelledStatement (String, Box<Statement<Exp>>),
+        LabelledStatement(String, Box<Statement<Exp>>),
         Goto(String),
     }
 
