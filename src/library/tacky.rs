@@ -79,6 +79,18 @@ pub enum Instruction {
         src: TackyVal,
         dst: TackyVal,
     },
+    GetAddress {
+        src: TackyVal,
+        dst: TackyVal,
+    },
+    Load {
+        src_ptr: TackyVal,
+        dst: TackyVal,
+    },
+    Store {
+        src: TackyVal,
+        dst_ptr: TackyVal,
+    },
     Jump(String),
     JumpIfZero(TackyVal, String),
     JumpIfNotZero(TackyVal, String),

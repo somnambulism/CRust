@@ -14,7 +14,7 @@ pub fn zero(t: &Type) -> StaticInit {
         Type::Int => StaticInit::IntInit(0 as i32),
         Type::Long => StaticInit::LongInit(0 as i64),
         Type::UInt => StaticInit::UIntInit(0 as u32),
-        Type::ULong => StaticInit::ULongInit(0 as u64),
+        Type::ULong | Type::Pointer(_) => StaticInit::ULongInit(0 as u64),
         Type::Double => StaticInit::DoubleInit(0 as f64),
         Type::FunType { .. } => {
             panic!("Internal error: zero doesn't make sense for function type");

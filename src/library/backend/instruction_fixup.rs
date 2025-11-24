@@ -25,7 +25,14 @@ fn is_constant(operand: &Operand) -> bool {
 }
 
 fn is_memory(operand: &Operand) -> bool {
-    matches!(operand, Operand::Stack(_) | Operand::Data(_))
+    matches!(operand, Operand::Memory(..) | Operand::Data(_))
+}
+
+fn is_xmm(reg: &Reg) -> bool {
+    matches!(
+        reg,
+        Reg::XMM0 | Reg::XMM1 | Reg::XMM2 | Reg::XMM3 | Reg::XMM7 | Reg::XMM14 | Reg::XMM15
+    )
 }
 
 fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
@@ -33,8 +40,8 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         // Mov can't move a value from one memory address to another
         Instruction::Mov(
             t,
-            src @ Operand::Stack(_) | src @ Operand::Data(_),
-            dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            src @ Operand::Memory(..) | src @ Operand::Data(_),
+            dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         ) => {
             let scratch = if t == AsmType::Double {
                 Operand::Reg(Reg::XMM14)
@@ -50,7 +57,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         Instruction::Mov(
             AsmType::Quadword,
             src @ Operand::Imm(i),
-            dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         ) if is_large(i) => {
             vec![
                 Instruction::Mov(AsmType::Quadword, src, Operand::Reg(Reg::R10)),
@@ -72,7 +79,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         // Movsx can't handle immediate source or memory dst
         Instruction::Movsx(
             src @ Operand::Imm(_),
-            dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         ) => {
             vec![
                 Instruction::Mov(AsmType::Longword, src, Operand::Reg(Reg::R10)),
@@ -86,7 +93,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
                 Instruction::Movsx(Operand::Reg(Reg::R10), dst),
             ]
         }
-        Instruction::Movsx(src, dst @ Operand::Stack(_) | dst @ Operand::Data(_)) => {
+        Instruction::Movsx(src, dst @ Operand::Memory(..) | dst @ Operand::Data(_)) => {
             vec![
                 Instruction::Movsx(src, Operand::Reg(Reg::R11)),
                 Instruction::Mov(AsmType::Quadword, Operand::Reg(Reg::R11), dst),
@@ -110,6 +117,11 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         Instruction::Div(t, Operand::Imm(i)) => vec![
             Instruction::Mov(t.clone(), Operand::Imm(i), Operand::Reg(Reg::R10)),
             Instruction::Div(t, Operand::Reg(Reg::R10)),
+        ],
+        // dst of lea must be a register
+        Instruction::Lea(src, dst) if is_memory(&dst) => vec![
+            Instruction::Lea(src, Operand::Reg(Reg::R11)),
+            Instruction::Mov(AsmType::Quadword, Operand::Reg(Reg::R11), dst),
         ],
         // Binary operations on double require register as destination
         Instruction::Binary {
@@ -163,8 +175,8 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
                 | op @ BinaryOperator::Or
                 | op @ BinaryOperator::Xor,
             t,
-            src: src @ Operand::Stack(_) | src @ Operand::Data(_),
-            dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            src: src @ Operand::Memory(..) | src @ Operand::Data(_),
+            dst: dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         } => vec![
             Instruction::Mov(t.clone(), src, Operand::Reg(Reg::R10)),
             Instruction::Binary {
@@ -179,7 +191,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
             op: BinaryOperator::Mult,
             t: AsmType::Quadword,
             src: src @ Operand::Imm(i),
-            dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            dst: dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         } if is_large(i) => {
             // rewrite both operands
             vec![
@@ -215,7 +227,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
             op: BinaryOperator::Mult,
             t,
             src,
-            dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            dst: dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         } => vec![
             Instruction::Mov(t.clone(), dst.clone(), Operand::Reg(Reg::R11)),
             Instruction::Binary {
@@ -235,7 +247,7 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
                 | op @ BinaryOperator::Shr,
             t,
             src,
-            dst: dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            dst: dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         } => {
             // if the source is a constant, sal/sar can be done directly
             if let Operand::Imm(_) = src {
@@ -264,8 +276,8 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
         // Both operands of cmp can't be in memory
         Instruction::Cmp(
             t,
-            src @ Operand::Stack(_) | src @ Operand::Data(_),
-            dst @ Operand::Stack(_) | dst @ Operand::Data(_),
+            src @ Operand::Memory(..) | src @ Operand::Data(_),
+            dst @ Operand::Memory(..) | dst @ Operand::Data(_),
         ) => vec![
             Instruction::Mov(t.clone(), src, Operand::Reg(Reg::R10)),
             Instruction::Cmp(t, Operand::Reg(Reg::R10), dst),
@@ -294,12 +306,25 @@ fn fixup_instruction(instruction: Instruction) -> Vec<Instruction> {
             Instruction::Mov(t.clone(), Operand::Imm(i), Operand::Reg(Reg::R11)),
             Instruction::Cmp(t, src, Operand::Reg(Reg::R11)),
         ],
+        Instruction::Push(Operand::Reg(r)) if is_xmm(&r) => vec![
+            Instruction::Binary {
+                op: BinaryOperator::Sub,
+                t: AsmType::Quadword,
+                src: Operand::Imm(8),
+                dst: Operand::Reg(Reg::SP),
+            },
+            Instruction::Mov(
+                AsmType::Double,
+                Operand::Reg(r),
+                Operand::Memory(Reg::SP, 0),
+            ),
+        ],
         Instruction::Push(src @ Operand::Imm(i)) if is_large(i) => vec![
             Instruction::Mov(AsmType::Quadword, src, Operand::Reg(Reg::R10)),
             Instruction::Push(Operand::Reg(Reg::R10)),
         ],
         // destination of cvttsd2si must be a register
-        Instruction::Cvttsd2si(t, src, dst @ Operand::Stack(_) | dst @ Operand::Data(_)) => vec![
+        Instruction::Cvttsd2si(t, src, dst @ Operand::Memory(..) | dst @ Operand::Data(_)) => vec![
             Instruction::Cvttsd2si(t.clone(), src, Operand::Reg(Reg::R11)),
             Instruction::Mov(t, Operand::Reg(Reg::R11), dst),
         ],

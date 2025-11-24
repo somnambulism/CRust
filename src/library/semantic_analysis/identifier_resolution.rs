@@ -6,7 +6,6 @@ use crate::library::{
             Block, BlockItem, Declaration, ForInit, FunctionDeclaration, Program, Statement,
             VariableDeclaration,
         },
-        ops::UnaryOperator,
         storage_class::StorageClass,
         untyped_exp::Exp,
     },
@@ -52,56 +51,22 @@ impl Resolver {
     fn resolve_exp(&self, exp: &Exp) -> Exp {
         match exp {
             Exp::Assignment(left, right) => {
-                // validate that lhs is an lvalue
-                if let Exp::Var(_) = left.as_ref() {
-                    // recursively process lhs and rhs
-                    return Exp::Assignment(
-                        self.resolve_exp(left).into(),
-                        self.resolve_exp(right).into(),
-                    );
-                } else {
-                    panic!(
-                        "Expected expression on left-hand side of assignment statement, found {:?}",
-                        left
-                    )
-                }
+                // recursively process lhs and rhs
+                Exp::Assignment(
+                    self.resolve_exp(left).into(),
+                    self.resolve_exp(right).into(),
+                )
             }
             Exp::CompoundAssign(op, left, right) => {
-                // validate that lhs is an lvalue
-                if let Exp::Var(_) = left.as_ref() {
-                    // recursively process lhs and rhs
-                    return Exp::CompoundAssign(
-                        op.clone(),
-                        Box::new(self.resolve_exp(left)),
-                        Box::new(self.resolve_exp(right)),
-                    );
-                } else {
-                    panic!(
-                        "Expected expression on left-hand side of compound assignment statement, found {:?}",
-                        left
-                    )
-                }
+                // recursively process lhs and rhs
+                Exp::CompoundAssign(
+                    op.clone(),
+                    Box::new(self.resolve_exp(left)),
+                    Box::new(self.resolve_exp(right)),
+                )
             }
-            Exp::PostfixIncr(e) => {
-                if let Exp::Var(_) = e.as_ref() {
-                    Exp::PostfixIncr(Box::new(self.resolve_exp(e)))
-                } else {
-                    panic!(
-                        "Operand of postfix increment must be a variable, found {:?}",
-                        e
-                    );
-                }
-            }
-            Exp::PostfixDecr(e) => {
-                if let Exp::Var(_) = e.as_ref() {
-                    Exp::PostfixDecr(Box::new(self.resolve_exp(e)))
-                } else {
-                    panic!(
-                        "Operand of postfix increment must be a variable, found {:?}",
-                        e
-                    );
-                }
-            }
+            Exp::PostfixIncr(e) => Exp::PostfixIncr(Box::new(self.resolve_exp(e))),
+            Exp::PostfixDecr(e) => Exp::PostfixDecr(Box::new(self.resolve_exp(e))),
             Exp::Var(v) => {
                 // rename var from map
                 self.id_map.get(v.as_str()).map_or_else(
@@ -109,23 +74,12 @@ impl Resolver {
                     |v| Exp::Var(v.unique_name.clone()),
                 )
             }
-            // recursively process operands for casts unary, binary and conditional
+            // recursively process operands of other expressions
             Exp::Cast { target_type, e } => Exp::Cast {
                 target_type: target_type.clone(),
                 e: self.resolve_exp(e).into(),
             },
-            Exp::Unary(op, e) => {
-                // validate prefix ops
-                match op {
-                    UnaryOperator::Incr | UnaryOperator::Decr => {
-                        if !matches!(**e, Exp::Var(_)) {
-                            panic!("operand of ++/-- must be a variable")
-                        }
-                    }
-                    _ => {}
-                }
-                Exp::Unary(op.clone(), Box::new(self.resolve_exp(e)))
-            }
+            Exp::Unary(op, e) => Exp::Unary(op.clone(), Box::new(self.resolve_exp(e))),
             Exp::Binary(op, e1, e2) => Exp::Binary(
                 op.clone(),
                 Box::new(self.resolve_exp(e1)),
@@ -150,6 +104,8 @@ impl Resolver {
                     args: args.iter().map(|e| self.resolve_exp(e)).collect(),
                 }
             }
+            Exp::Dereference(inner) => Exp::Dereference(self.resolve_exp(inner).into()),
+            Exp::AddrOf(inner) => Exp::AddrOf(self.resolve_exp(inner).into()),
             // Nothing to do for constant
             Exp::Constant(c) => Exp::Constant(c.clone()),
         }

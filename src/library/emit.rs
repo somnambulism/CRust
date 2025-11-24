@@ -35,6 +35,7 @@ fn show_long_reg(reg: &Reg) -> String {
         Reg::R10 => "%r10d".to_string(),
         Reg::R11 => "%r11d".to_string(),
         Reg::SP => panic!("Internal error: no 32-bit RSP"),
+        Reg::BP => panic!("Internal error: no 32-bit RBP"),
         _ => panic!(
             "Internal error: can't store longword type in XMM register {:?}",
             reg
@@ -52,6 +53,7 @@ fn show_quadword_reg(reg: &Reg) -> String {
         Reg::R10 => "%r10".to_string(),
         Reg::R11 => "%r11".to_string(),
         Reg::SP => "%rsp".to_string(),
+        Reg::BP => "%rbp".to_string(),
         _ => panic!(
             "Internal error: can't store quadword type in XMM register {:?}",
             reg
@@ -85,6 +87,7 @@ fn show_byte_reg(reg: &Reg) -> String {
         Reg::R10 => "%r10b".to_string(),
         Reg::R11 => "%r11b".to_string(),
         Reg::SP => panic!("Internal error: no one-byte RSP"),
+        Reg::BP => panic!("Internal error: no one-byte RBP"),
         _ => panic!(
             "Internal error: can't store byte type in XMM register {:?}",
             reg
@@ -187,7 +190,8 @@ impl CodeEmitter {
                 AsmType::Double => show_double_reg(r),
             },
             Operand::Imm(i) => format!("${}", i),
-            Operand::Stack(i) => format!("{}(%rbp)", i),
+            Operand::Memory(r, 0) => format!("({})", show_quadword_reg(r)),
+            Operand::Memory(r, i) => format!("{}({})", i, show_quadword_reg(r)),
             Operand::Data(name) => {
                 let lbl = if self.symbols.is_constant(name) {
                     self.show_local_label(name)
@@ -300,6 +304,12 @@ impl CodeEmitter {
                     self.show_operand(t, operand)
                 )
             }
+            Instruction::Lea(src, dst) => writeln!(
+                self.file,
+                "\tleaq {}, {}",
+                self.show_operand(&AsmType::Quadword, src),
+                self.show_operand(&AsmType::Quadword, dst)
+            ),
             Instruction::Cdq(AsmType::Longword) => writeln!(self.file, "\tcdq"),
             Instruction::Cdq(AsmType::Quadword) => writeln!(self.file, "\tcqo"),
             Instruction::Jmp(lbl) => writeln!(self.file, "\tjmp {}", self.show_local_label(lbl)),
@@ -442,7 +452,7 @@ impl CodeEmitter {
                 global,
                 init,
                 alignment,
-            } 
+            }
             // is_zero is false for all doubles
             if init.is_zero() => {
                 let label = self.show_label(&name);

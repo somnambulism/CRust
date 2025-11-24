@@ -44,7 +44,7 @@ pub struct CodeGen {
 fn convert_type(t: &Type) -> AsmType {
     match t {
         Type::Int | Type::UInt => AsmType::Longword,
-        Type::Long | Type::ULong => AsmType::Quadword,
+        Type::Long | Type::ULong | Type::Pointer(_) => AsmType::Quadword,
         Type::Double => AsmType::Double,
         Type::FunType { .. } => panic!("Internal error, converting function type to assembly"),
     }
@@ -560,6 +560,29 @@ impl CodeGen {
                     }
                 }
             }
+            TackyInstruction::Load { src_ptr, dst } => {
+                let asm_src_ptr = self.convert_val(src_ptr);
+                let asm_dst = self.convert_val(dst);
+                let t = self.asm_type(dst);
+                vec![
+                    Instruction::Mov(AsmType::Quadword, asm_src_ptr, Operand::Reg(Reg::R9)),
+                    Instruction::Mov(t, Operand::Memory(Reg::R9, 0), asm_dst),
+                ]
+            }
+            TackyInstruction::Store { src, dst_ptr } => {
+                let asm_src = self.convert_val(src);
+                let t = self.asm_type(src);
+                let asm_dst_ptr = self.convert_val(dst_ptr);
+                vec![
+                    Instruction::Mov(AsmType::Quadword, asm_dst_ptr, Operand::Reg(Reg::R9)),
+                    Instruction::Mov(t, asm_src, Operand::Memory(Reg::R9, 0)),
+                ]
+            }
+            TackyInstruction::GetAddress { src, dst } => {
+                let asm_src = self.convert_val(src);
+                let asm_dst = self.convert_val(dst);
+                vec![Instruction::Lea(asm_src, asm_dst)]
+            }
             TackyInstruction::Jump(target) => vec![Instruction::Jmp(target.to_string())],
             TackyInstruction::JumpIfZero(cond, target) => {
                 let t = self.asm_type(cond);
@@ -768,7 +791,7 @@ impl CodeGen {
                 ArgLoc::Stack => {
                     // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
                     let offset = 16 + (idx as isize) * 8;
-                    let stk = Operand::Stack(offset);
+                    let stk = Operand::Memory(Reg::BP, offset);
                     instructions.push(Instruction::Mov(
                         param.asm_type.clone(),
                         stk,

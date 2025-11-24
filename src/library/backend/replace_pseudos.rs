@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::library::{
-    assembly::{Instruction, Operand, Program, TopLevel},
+    assembly::{Instruction, Operand, Program, Reg, TopLevel},
     backend::assembly_symbols::SymbolTable,
     util::rounding::round_away_from_zero,
 };
@@ -28,7 +28,7 @@ impl ReplacementState {
                 } else {
                     // We've already assigned this operand a stack slot
                     if let Some(&offset) = self.offset_map.get(s) {
-                        Operand::Stack(offset)
+                        Operand::Memory(Reg::BP, offset)
                     // We haven't already assigned it a stack slot;
                     // assign it and update state
                     } else {
@@ -40,7 +40,7 @@ impl ReplacementState {
                         );
                         self.offset_map.insert(s.to_string(), new_offset);
                         self.current_offset = new_offset;
-                        Operand::Stack(new_offset)
+                        Operand::Memory(Reg::BP, new_offset)
                     }
                 }
             }
@@ -68,6 +68,11 @@ impl ReplacementState {
                 let new_src = self.replace_operand(src, symbols);
                 let new_dst = self.replace_operand(dst, symbols);
                 Instruction::MovZeroExtend(new_src, new_dst)
+            }
+            Instruction::Lea(src, dst) => {
+                let new_src = self.replace_operand(src, symbols);
+                let new_dst = self.replace_operand(dst, symbols);
+                Instruction::Lea(new_src, new_dst)
             }
             Instruction::Unary(t, op, dst) => {
                 let new_dst = self.replace_operand(dst, symbols);

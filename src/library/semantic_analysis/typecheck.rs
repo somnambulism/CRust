@@ -19,6 +19,28 @@ use crate::library::{
     types::Type,
 };
 
+fn is_pointer(t: &Type) -> bool {
+    matches!(t, Type::Pointer(_))
+}
+
+fn is_arithmetic(t: &Type) -> bool {
+    match t {
+        Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Double => true,
+        Type::FunType { .. } | Type::Pointer(_) => false,
+    }
+}
+
+fn is_integer(t: &Type) -> bool {
+    match t {
+        Type::Int | Type::Long | Type::UInt | Type::ULong => true,
+        Type::Double | Type::FunType { .. } | Type::Pointer(_) => false,
+    }
+}
+
+fn is_lvalue(e: &Exp) -> bool {
+    matches!(e, Exp::Var(_) | Exp::Dereference(_))
+}
+
 fn convert_to(e: TypedExp, target_type: Type) -> TypedExp {
     let cast = InnerExp::Cast {
         target_type: target_type.clone(),
@@ -42,6 +64,43 @@ fn get_common_type(t1: &Type, t2: &Type) -> Type {
         t1.clone()
     } else {
         t2.clone()
+    }
+}
+
+fn is_null_pointer_constant(exp: &InnerExp) -> bool {
+    matches!(
+        exp,
+        InnerExp::Constant(T::ConstInt(0))
+            | InnerExp::Constant(T::ConstLong(0))
+            | InnerExp::Constant(T::ConstUInt(0))
+            | InnerExp::Constant(T::ConstULong(0))
+    )
+}
+
+fn get_common_pointer_type(e1: &TypedExp, e2: &TypedExp) -> Type {
+    if e1.t == e2.t {
+        e1.t.clone()
+    } else if is_null_pointer_constant(&e1.e) {
+        e2.t.clone()
+    } else if is_null_pointer_constant(&e2.e) {
+        e1.t.clone()
+    } else {
+        panic!("Expressions have incompatible types: {:?}, {:?}", e1, e2)
+    }
+}
+
+fn convert_by_assignment(e: TypedExp, target_type: Type) -> TypedExp {
+    if e.t == target_type {
+        e
+    } else if is_arithmetic(&e.t) && is_arithmetic(&target_type) {
+        convert_to(e, target_type)
+    } else if is_null_pointer_constant(&e.e) && is_pointer(&target_type) {
+        convert_to(e, target_type)
+    } else {
+        panic!(
+            "Cannot convert type {:?} for assignment: {:?}",
+            target_type, e
+        )
     }
 }
 
@@ -79,21 +138,33 @@ impl TypeChecker {
             Exp::Cast {
                 target_type,
                 e: inner,
-            } => {
-                let cast_exp = InnerExp::Cast {
-                    target_type: target_type.clone(),
-                    e: self.typecheck_exp(inner).into(),
-                };
-                TypedExp::set_type(cast_exp, target_type.clone())
-            }
-            Exp::Unary(op, inner) => self.typecheck_unary(&op, &inner),
-            Exp::Binary(op, e1, e2) => self.typecheck_binary(op, e1, e2),
-            Exp::PostfixDecr(inner) => {
-                self.typecheck_increment_decrement(inner, InnerExp::PostfixDecrement)
-            }
-            Exp::PostfixIncr(inner) => {
-                self.typecheck_increment_decrement(inner, InnerExp::PostfixIncrement)
-            }
+            } => self.typecheck_cast(target_type, inner),
+            Exp::Unary(UnaryOperator::Not, inner) => self.typecheck_not(&inner),
+            Exp::Unary(UnaryOperator::Complement, inner) => self.typecheck_complement(&inner),
+            Exp::Unary(UnaryOperator::Negate, inner) => self.typecheck_negate(&inner),
+            Exp::Unary(op, inner) => self.typecheck_incr(&op, &inner),
+            Exp::Binary(op, e1, e2) => match op {
+                BinaryOperator::And | BinaryOperator::Or => self.typecheck_logical(op, e1, e2),
+                BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Mod
+                | BinaryOperator::BitwiseAnd
+                | BinaryOperator::BitwiseOr
+                | BinaryOperator::BitwiseXor => self.typecheck_arithmetic(op, e1, e2),
+                BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterOrEqual
+                | BinaryOperator::LessThan
+                | BinaryOperator::LessOrEqual => self.typecheck_comparison(op, e1, e2),
+                BinaryOperator::BitshiftLeft | BinaryOperator::BitshiftRight => {
+                    self.typecheck_bitshift(op, e1, e2)
+                }
+            },
+            Exp::PostfixDecr(inner) => self.typecheck_postfix_decr(inner),
+            Exp::PostfixIncr(inner) => self.typecheck_postfix_incr(inner),
             Exp::Assignment(lhs, rhs) => self.typecheck_assignment(lhs, rhs),
             Exp::CompoundAssign(op, lhs, rhs) => self.typecheck_compound_assignment(op, lhs, rhs),
             Exp::Conditional {
@@ -102,118 +173,219 @@ impl TypeChecker {
                 else_result,
             } => self.typecheck_conditional(condition, then_result, else_result),
             Exp::FunCall { f, args } => self.typecheck_fun_call(f, args),
+            Exp::Dereference(inner) => self.typecheck_dereference(inner),
+            Exp::AddrOf(inner) => self.typecheck_addr_of(inner),
         }
     }
 
-    fn typecheck_unary(&self, op: &UnaryOperator, inner: &Exp) -> TypedExp {
+    fn typecheck_cast(&self, target_type: &Type, inner: &Exp) -> TypedExp {
         let typed_inner = self.typecheck_exp(inner);
-        let unary_exp = InnerExp::Unary(op.clone(), Box::new(typed_inner.clone()));
-        match op {
-            UnaryOperator::Not => TypedExp::set_type(unary_exp, Type::Int),
-            UnaryOperator::Complement if typed_inner.get_type() == Type::Double => {
-                panic!("Can't apply bitwise complement to double");
-            }
-            _ => TypedExp::set_type(unary_exp, typed_inner.get_type()),
-        }
-    }
-
-    fn typecheck_binary(&self, op: &BinaryOperator, e1: &Exp, e2: &Exp) -> TypedExp {
-        let typed_e1 = self.typecheck_exp(e1);
-        let typed_e2 = self.typecheck_exp(e2);
-        match op {
-            BinaryOperator::BitshiftLeft | BinaryOperator::BitshiftRight => {
-                if typed_e1.get_type() == Type::Double || typed_e2.get_type() == Type::Double {
-                    panic!("Both operands of bitshift must be integer type");
-                }
-                // Don't perform usual arithmetic conversions; result has type of left operand
-                let typed_binexp =
-                    InnerExp::Binary(op.clone(), typed_e1.clone().into(), typed_e2.into());
-                TypedExp::set_type(typed_binexp, typed_e1.get_type())
-            }
-            BinaryOperator::And | BinaryOperator::Or => {
-                let typed_binexp = InnerExp::Binary(op.clone(), typed_e1.into(), typed_e2.into());
-                TypedExp::set_type(typed_binexp, Type::Int)
+        match (target_type, typed_inner.t) {
+            (Type::Double, Type::Pointer(_)) | (Type::Pointer(_), Type::Double) => {
+                panic!("Cannot cast between pointer and double")
             }
             _ => {
-                let t1 = typed_e1.get_type();
-                let t2 = typed_e2.get_type();
-                let common_type = get_common_type(&t1, &t2);
-                let converted_e1 = convert_to(typed_e1, common_type.clone());
-                let converted_e2 = convert_to(typed_e2, common_type.clone());
-                let binary_exp =
-                    InnerExp::Binary(op.clone(), converted_e1.into(), converted_e2.into());
-                match op {
-                    BinaryOperator::Mod
-                    | BinaryOperator::BitwiseAnd
-                    | BinaryOperator::BitwiseOr
-                    | BinaryOperator::BitwiseXor
-                        if common_type == Type::Double =>
-                    {
-                        panic!("Can't apply % or bitwise operations to double");
-                    }
-                    BinaryOperator::Add
-                    | BinaryOperator::Subtract
-                    | BinaryOperator::Multiply
-                    | BinaryOperator::Divide
-                    | BinaryOperator::Mod
-                    | BinaryOperator::BitwiseAnd
-                    | BinaryOperator::BitwiseOr
-                    | BinaryOperator::BitwiseXor => TypedExp::set_type(binary_exp, common_type),
-                    _ => TypedExp::set_type(binary_exp, Type::Int),
-                }
+                let cast_exp = InnerExp::Cast {
+                    target_type: target_type.clone(),
+                    e: self.typecheck_exp(inner).into(),
+                };
+                TypedExp::set_type(cast_exp, target_type.clone())
             }
         }
     }
 
-    fn typecheck_increment_decrement<F>(&self, inner: &Exp, ctor: F) -> TypedExp
-    where
-        F: Fn(Box<TypedExp>) -> InnerExp,
-    {
+    fn typecheck_not(&self, inner: &Exp) -> TypedExp {
         let typed_inner = self.typecheck_exp(inner);
-        let inner_exp = ctor(Box::new(typed_inner.clone()));
-        TypedExp::set_type(inner_exp, typed_inner.get_type())
+        let not_exp = InnerExp::Unary(UnaryOperator::Not, typed_inner.into());
+        TypedExp::set_type(not_exp, Type::Int)
+    }
+
+    fn typecheck_complement(&self, inner: &Exp) -> TypedExp {
+        let typed_inner = self.typecheck_exp(inner);
+
+        if typed_inner.t == Type::Double || is_pointer(&typed_inner.t) {
+            panic!("Bitwise complement only valid for integer types");
+        } else {
+            let complement_exp =
+                InnerExp::Unary(UnaryOperator::Complement, typed_inner.clone().into());
+            TypedExp::set_type(complement_exp, typed_inner.t)
+        }
+    }
+
+    fn typecheck_negate(&self, inner: &Exp) -> TypedExp {
+        let typed_inner = self.typecheck_exp(inner);
+        if let Type::Pointer(_) = typed_inner.t {
+            panic!("Can't negate a pointer {:?}", inner);
+        } else {
+            let negate_exp = InnerExp::Unary(UnaryOperator::Negate, typed_inner.clone().into());
+            TypedExp::set_type(negate_exp, typed_inner.t)
+        }
+    }
+
+    fn typecheck_incr(&self, op: &UnaryOperator, inner: &Exp) -> TypedExp {
+        if is_lvalue(inner) {
+            let typed_inner = self.typecheck_exp(inner);
+            let typed_exp = InnerExp::Unary(op.clone(), typed_inner.clone().into());
+            TypedExp::set_type(typed_exp, typed_inner.t)
+        } else {
+            panic!("Operand of ++/-- must be an lvalue");
+        }
+    }
+
+    fn typecheck_postfix_decr(&self, e: &Exp) -> TypedExp {
+        if is_lvalue(e) {
+            // Result has same value as e; no conversions required.
+            let typed_e = self.typecheck_exp(e);
+            let result_type = typed_e.get_type();
+            TypedExp::set_type(InnerExp::PostfixDecr(typed_e.into()), result_type)
+        } else {
+            panic!("Operand of postfix -- must be an lvalue");
+        }
+    }
+
+    fn typecheck_postfix_incr(&self, e: &Exp) -> TypedExp {
+        if is_lvalue(e) {
+            // Result has same value as e; no conversions required.
+            let typed_e = self.typecheck_exp(e);
+            let result_type = typed_e.get_type();
+            TypedExp::set_type(InnerExp::PostfixIncr(typed_e.into()), result_type)
+        } else {
+            panic!("Operand of postfix ++ must be an lvalue");
+        }
+    }
+
+    fn typecheck_logical(&self, op: &BinaryOperator, e1: &Exp, e2: &Exp) -> TypedExp {
+        let typed_e1 = self.typecheck_exp(e1);
+        let typed_e2 = self.typecheck_exp(e2);
+        let typed_binexp = InnerExp::Binary(op.clone(), typed_e1.clone().into(), typed_e2.into());
+        TypedExp::set_type(typed_binexp, Type::Int)
+    }
+
+    // handle ^, & and | here because they follow same typing rules as arithmetic ops
+    fn typecheck_arithmetic(&self, op: &BinaryOperator, e1: &Exp, e2: &Exp) -> TypedExp {
+        let typed_e1 = self.typecheck_exp(e1);
+        let typed_e2 = self.typecheck_exp(e2);
+
+        if is_pointer(&typed_e1.t) || is_pointer(&typed_e2.t) {
+            panic!("arithmetic operations not permitted on pointers");
+        } else {
+            let common_type = get_common_type(&typed_e1.t, &typed_e2.t);
+            let converted_e1 = convert_to(typed_e1, common_type.clone());
+            let converted_e2 = convert_to(typed_e2, common_type.clone());
+            let binary_exp = InnerExp::Binary(op.clone(), converted_e1.into(), converted_e2.into());
+
+            match op {
+                BinaryOperator::Mod
+                | BinaryOperator::BitwiseAnd
+                | BinaryOperator::BitwiseOr
+                | BinaryOperator::BitwiseXor
+                    if common_type == Type::Double =>
+                {
+                    panic!("Can't apply %, &, | or ^ to double");
+                }
+                BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Mod
+                | BinaryOperator::BitwiseAnd
+                | BinaryOperator::BitwiseOr
+                | BinaryOperator::BitwiseXor => TypedExp::set_type(binary_exp, common_type),
+                op => panic!("Internal error: {:?} should be typechecked elsewhere.", op),
+            }
+        }
+    }
+
+    fn typecheck_comparison(&self, op: &BinaryOperator, e1: &Exp, e2: &Exp) -> TypedExp {
+        let typed_e1 = self.typecheck_exp(e1);
+        let typed_e2 = self.typecheck_exp(e2);
+
+        let common_type = if is_pointer(&typed_e1.t) || is_pointer(&typed_e2.t) {
+            get_common_pointer_type(&typed_e1, &typed_e2)
+        } else {
+            get_common_type(&typed_e1.t, &typed_e2.t)
+        };
+
+        let converted_e1 = convert_to(typed_e1, common_type.clone());
+        let converted_e2 = convert_to(typed_e2, common_type);
+        let binary_exp =
+            InnerExp::Binary(op.clone(), Box::new(converted_e1), Box::new(converted_e2));
+        TypedExp::set_type(binary_exp, Type::Int)
+    }
+
+    fn typecheck_bitshift(&self, op: &BinaryOperator, e1: &Exp, e2: &Exp) -> TypedExp {
+        let typed_e1 = self.typecheck_exp(e1);
+        let typed_e2 = self.typecheck_exp(e2);
+
+        if !(is_integer(&typed_e1.get_type()) && is_integer(&typed_e2.get_type())) {
+            panic!("Both operands of bit shift operation must be integers");
+        } else {
+            // Don't perform usual arithmetic conversions; results has type of left operand
+            let typed_binop =
+                InnerExp::Binary(op.clone(), typed_e1.clone().into(), typed_e2.into());
+            TypedExp::set_type(typed_binop, typed_e1.get_type())
+        }
     }
 
     fn typecheck_assignment(&self, lhs: &Exp, rhs: &Exp) -> TypedExp {
-        let typed_lhs = self.typecheck_exp(lhs);
-        let lhs_type = typed_lhs.get_type();
-        let typed_rhs = self.typecheck_exp(rhs);
-        let converted_rhs = convert_to(typed_rhs, lhs_type.clone());
-        let assign_exp = InnerExp::Assignment(typed_lhs.into(), converted_rhs.into());
-        TypedExp::set_type(assign_exp, lhs_type)
+        if is_lvalue(lhs) {
+            let typed_lhs = self.typecheck_exp(lhs);
+            let lhs_type = typed_lhs.get_type();
+            let typed_rhs = self.typecheck_exp(rhs);
+            let converted_rhs = convert_by_assignment(typed_rhs, lhs_type.clone());
+            let assign_exp = InnerExp::Assignment(typed_lhs.into(), converted_rhs.into());
+            TypedExp::set_type(assign_exp, lhs_type)
+        } else {
+            panic!("left hand side of assignment is invalid lvalue");
+        }
     }
 
     fn typecheck_compound_assignment(&self, op: &BinaryOperator, lhs: &Exp, rhs: &Exp) -> TypedExp {
-        let typed_lhs = self.typecheck_exp(lhs);
-        let lhs_type = typed_lhs.get_type();
-        let typed_rhs = self.typecheck_exp(rhs);
-        let rhs_type = typed_rhs.get_type();
-        if matches!(op, BinaryOperator::Mod |
-            BinaryOperator::BitwiseAnd |
-            BinaryOperator::BitwiseOr |
-            BinaryOperator::BitwiseXor |
-            BinaryOperator::BitshiftLeft |
-            BinaryOperator::BitshiftRight if lhs_type == Type::Double || rhs_type == Type::Double)
-        {
-            panic!("Operator {:?} does not support double operands", op);
-        }
-        let (result_t, converted_rhs) =
-            if op == &BinaryOperator::BitshiftLeft || op == &BinaryOperator::BitshiftRight {
-                (lhs_type.clone(), typed_rhs)
-            } else {
-                // We perform usual arithmetic conversions for every compound assignment operator
-                // EXCEPT left/right bitshift
-                let common_type = get_common_type(&lhs_type, &rhs_type);
-                (common_type.clone(), convert_to(typed_rhs, common_type))
-            };
+        if is_lvalue(lhs) {
+            let typed_lhs = self.typecheck_exp(lhs);
+            let lhs_type = typed_lhs.get_type();
+            let typed_rhs = self.typecheck_exp(rhs);
+            let rhs_type = typed_rhs.get_type();
 
-        let compound_assign_exp = InnerExp::CompoundAssignment {
-            op: op.clone(),
-            lhs: typed_lhs.into(),
-            rhs: converted_rhs.into(),
-            result_t,
-        };
-        TypedExp::set_type(compound_assign_exp, lhs_type)
+            match op {
+                BinaryOperator::Mod
+                | BinaryOperator::BitwiseAnd
+                | BinaryOperator::BitwiseOr
+                | BinaryOperator::BitwiseXor
+                | BinaryOperator::BitshiftLeft
+                | BinaryOperator::BitshiftRight
+                    if !is_integer(&lhs_type) || !is_integer(&rhs_type) =>
+                {
+                    panic!("Operator {:?} does only supports integer operands", op)
+                }
+                BinaryOperator::Multiply | BinaryOperator::Divide
+                    if is_pointer(&lhs_type) || is_pointer(&rhs_type) =>
+                {
+                    panic!("Operator {:?} does not support pointer operands", op)
+                }
+                _ => (),
+            }
+
+            let (result_t, converted_rhs) =
+                if op == &BinaryOperator::BitshiftLeft || op == &BinaryOperator::BitshiftRight {
+                    (lhs_type.clone(), typed_rhs)
+                } else {
+                    // We perform usual arithmetic conversions for every compound assignment operator
+                    // EXCEPT left/right bitshift
+                    let common_type = get_common_type(&lhs_type, &rhs_type);
+                    (common_type.clone(), convert_to(typed_rhs, common_type))
+                };
+
+            let compound_assign_exp = InnerExp::CompoundAssignment {
+                op: op.clone(),
+                lhs: typed_lhs.into(),
+                rhs: converted_rhs.into(),
+                result_t,
+            };
+            TypedExp::set_type(compound_assign_exp, lhs_type)
+        } else {
+            panic!("Left-hand side of compound assignment must be an lvalue");
+        }
     }
 
     fn typecheck_conditional(
@@ -225,7 +397,13 @@ impl TypeChecker {
         let typed_condition = self.typecheck_exp(condition);
         let typed_then = self.typecheck_exp(then_result);
         let typed_else = self.typecheck_exp(else_result);
-        let common_type = get_common_type(&typed_then.get_type(), &typed_else.get_type());
+
+        let common_type = if is_pointer(&typed_then.t) || is_pointer(&typed_else.t) {
+            get_common_pointer_type(&typed_then, &typed_else)
+        } else {
+            get_common_type(&typed_then.t, &typed_else.t)
+        };
+
         let converted_then = convert_to(typed_then, common_type.clone());
         let converted_else = convert_to(typed_else, common_type.clone());
         let conditional_exp = InnerExp::Conditional {
@@ -251,7 +429,7 @@ impl TypeChecker {
                     args.iter()
                         .zip(param_types.iter())
                         .map(|(arg, param_type)| {
-                            convert_to(self.typecheck_exp(arg), param_type.clone())
+                            convert_by_assignment(self.typecheck_exp(arg), param_type.clone())
                         });
                 let call_exp = InnerExp::FunCall {
                     f: f.to_string(),
@@ -265,18 +443,49 @@ impl TypeChecker {
         }
     }
 
-    // convert a constant to a static initializer, performing type conversion if
-    // needed
+    fn typecheck_dereference(&self, inner: &Exp) -> TypedExp {
+        let typed_inner = self.typecheck_exp(inner);
+        if let Type::Pointer(referenced_t) = typed_inner.get_type() {
+            let deref_exp = InnerExp::Dereference(typed_inner.into());
+            TypedExp::set_type(deref_exp, *referenced_t)
+        } else {
+            panic!("Tried to dereference non-ponter {:?}", inner)
+        }
+    }
+
+    fn typecheck_addr_of(&self, inner: &Exp) -> TypedExp {
+        match inner {
+            Exp::Dereference(_) | Exp::Var(_) => {
+                let typed_inner = self.typecheck_exp(inner);
+                let inner_t = typed_inner.get_type();
+                let addr_exp = InnerExp::AddrOf(typed_inner.into());
+                TypedExp::set_type(addr_exp, Type::Pointer(inner_t.into()))
+            }
+            _ => panic!("Cannot take address of non-lvalue {:?}", inner),
+        }
+    }
+
     fn to_static_init(&self, exp: &Exp, var_type: &Type) -> InitialValue {
         match exp {
             Exp::Constant(c) => {
-                let init_val = match const_convert(var_type, &c) {
-                    T::ConstInt(i) => StaticInit::IntInit(i),
-                    T::ConstLong(l) => StaticInit::LongInit(l),
-                    T::ConstUInt(u) => StaticInit::UIntInit(u),
-                    T::ConstULong(ul) => StaticInit::ULongInit(ul),
-                    T::ConstDouble(d) => StaticInit::DoubleInit(d),
+                let init_val = if is_pointer(var_type) {
+                    if is_null_pointer_constant(&InnerExp::Constant(c.clone())) {
+                        StaticInit::ULongInit(0)
+                    } else {
+                        panic!(
+                            "Static pointers can only be initialized with null pointer constants"
+                        );
+                    }
+                } else {
+                    match const_convert(var_type, &c) {
+                        T::ConstInt(i) => StaticInit::IntInit(i),
+                        T::ConstLong(l) => StaticInit::LongInit(l),
+                        T::ConstUInt(u) => StaticInit::UIntInit(u),
+                        T::ConstULong(ul) => StaticInit::ULongInit(ul),
+                        T::ConstDouble(d) => StaticInit::DoubleInit(d),
+                    }
                 };
+
                 InitialValue::Initial(init_val)
             }
             _ => {
@@ -312,7 +521,7 @@ impl TypeChecker {
         match statement {
             Statement::Return(e) => {
                 let typed_e = self.typecheck_exp(e);
-                Statement::Return(convert_to(typed_e, ret_type.clone()))
+                Statement::Return(convert_by_assignment(typed_e, ret_type.clone()))
             }
             Statement::Expression(e) => Statement::Expression(self.typecheck_exp(e)),
             Statement::If {
@@ -352,8 +561,8 @@ impl TypeChecker {
                 id,
             } => {
                 let typed_control = self.typecheck_exp(control);
-                if typed_control.get_type() == Type::Double {
-                    panic!("Switch control expression cannot be double");
+                if !is_integer(&typed_control.get_type()) {
+                    panic!("Switch control expression must have integer type");
                 } else {
                     Statement::Switch {
                         control: typed_control,
@@ -488,7 +697,7 @@ impl TypeChecker {
                     var_type: var_type.clone(),
                     storage_class: *storage_class,
                     init: Option::map(init.as_ref(), |e| {
-                        convert_to(self.typecheck_exp(e), var_type.clone())
+                        convert_by_assignment(self.typecheck_exp(e), var_type.clone())
                     }),
                 }
             }

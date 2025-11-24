@@ -33,6 +33,7 @@ fn const_of_int64(v: i64, target_type: &Type) -> T {
         Type::ULong => T::ConstULong(v as u64),
         Type::Double => T::ConstDouble(v as f64),
         Type::FunType { .. } => panic!("Internal error: can't convert to function type"),
+        _ => todo!(),
     }
 }
 

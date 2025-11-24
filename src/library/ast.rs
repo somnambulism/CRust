@@ -65,6 +65,8 @@ pub mod untyped_exp {
             f: String,
             args: Vec<Exp>,
         },
+        Dereference(Box<Exp>),
+        AddrOf(Box<Exp>),
     }
 
     impl ExpTrait for Exp {}
@@ -103,8 +105,8 @@ pub mod typed_exp {
              */
             result_t: Type,
         },
-        PostfixIncrement(Box<TypedExp>),
-        PostfixDecrement(Box<TypedExp>),
+        PostfixIncr(Box<TypedExp>),
+        PostfixDecr(Box<TypedExp>),
         Conditional {
             condition: Box<TypedExp>,
             then_result: Box<TypedExp>,
@@ -114,6 +116,8 @@ pub mod typed_exp {
             f: String,
             args: Vec<TypedExp>,
         },
+        Dereference(Box<TypedExp>),
+        AddrOf(Box<TypedExp>),
     }
 
     #[derive(Debug, PartialEq, Clone)]
