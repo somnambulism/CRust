@@ -67,9 +67,20 @@ pub mod untyped_exp {
         },
         Dereference(Box<Exp>),
         AddrOf(Box<Exp>),
+        Subscript {
+            ptr: Box<Exp>,
+            index: Box<Exp>,
+        },
+        Init(Box<Initializer>),
     }
 
     impl ExpTrait for Exp {}
+
+    #[derive(Debug, PartialEq, Clone)]
+    pub enum Initializer {
+        SingleInit(Exp),
+        CompoundInit(Vec<Box<Initializer>>),
+    }
 }
 
 // Exp AST definition with type info
@@ -118,6 +129,11 @@ pub mod typed_exp {
         },
         Dereference(Box<TypedExp>),
         AddrOf(Box<TypedExp>),
+        Subscript {
+            ptr: Box<TypedExp>,
+            index: Box<TypedExp>,
+        },
+        Init(Box<Initializer>),
     }
 
     #[derive(Debug, PartialEq, Clone)]
@@ -137,6 +153,12 @@ pub mod typed_exp {
     }
 
     impl ExpTrait for TypedExp {}
+
+    #[derive(Debug, PartialEq, Clone)]
+    pub enum Initializer {
+        SingleInit(TypedExp),
+        CompoundInit(Type, Vec<Box<Initializer>>),
+    }
 }
 
 pub trait ExpTrait: Debug + PartialEq {}

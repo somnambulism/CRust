@@ -385,6 +385,7 @@ impl CodeEmitter {
             StaticInit::DoubleInit(_) => {
                 panic!("Internal error: should never use zeroinit for doubles")
             }
+            _ => todo!(),
         }
     }
 
@@ -395,6 +396,7 @@ impl CodeEmitter {
             StaticInit::UIntInit(u) => writeln!(self.file, "\t.long {}", u),
             StaticInit::ULongInit(l) => writeln!(self.file, "\t.quad {}", l),
             StaticInit::DoubleInit(d) => writeln!(self.file, "\t.quad {}", d.to_bits()),
+            _ => todo!(),
         }
     }
 

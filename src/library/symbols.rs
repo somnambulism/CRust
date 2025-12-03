@@ -9,7 +9,7 @@ use super::types::Type;
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitialValue {
     Tentative,
-    Initial(StaticInit),
+    Initial(Vec<StaticInit>),
     NoInitializer,
 }
 

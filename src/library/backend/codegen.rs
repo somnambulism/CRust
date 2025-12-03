@@ -47,6 +47,7 @@ fn convert_type(t: &Type) -> AsmType {
         Type::Long | Type::ULong | Type::Pointer(_) => AsmType::Quadword,
         Type::Double => AsmType::Double,
         Type::FunType { .. } => panic!("Internal error, converting function type to assembly"),
+        _ => todo!(),
     }
 }
 

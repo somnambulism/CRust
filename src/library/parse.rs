@@ -5,7 +5,11 @@ use std::{
 
 use num_traits::ToPrimitive;
 
-use crate::library::{ast::storage_class::StorageClass, r#const::T, types::Type};
+use crate::library::{
+    ast::{storage_class::StorageClass, untyped_exp::Initializer},
+    r#const::T,
+    types::Type,
+};
 
 use super::{
     ast::block_items::{Block as BlockStruct, Program as ProgramStruct},
@@ -26,6 +30,7 @@ type Program = ProgramStruct<Exp>;
 enum Declarator {
     Ident(String),
     PointerDeclarator(Box<Declarator>),
+    ArrayDeclarator(Box<Declarator>, Exp),
     FunDeclarator(Vec<ParamInfo>, Box<Declarator>),
 }
 
@@ -39,6 +44,14 @@ impl Declarator {
             Declarator::PointerDeclarator(d) => {
                 let derived_type = Type::Pointer(Box::new(base_type));
                 d.process(derived_type)
+            }
+            Declarator::ArrayDeclarator(inner, cnst) => {
+                let size = const_to_dim(cnst);
+                let derived_type = Type::Array {
+                    elem_type: Box::new(base_type),
+                    size,
+                };
+                inner.process(derived_type)
             }
             Declarator::FunDeclarator(params, declarator) => match &**declarator {
                 Declarator::Ident(s) => {
@@ -75,6 +88,7 @@ impl Declarator {
 #[derive(Debug)]
 enum AbstractDeclarator {
     AbstractPointer(Box<AbstractDeclarator>),
+    AbstractArray(Box<AbstractDeclarator>, Exp),
     AbstractBase,
 }
 
@@ -82,6 +96,14 @@ impl AbstractDeclarator {
     pub fn process(&self, base_type: Type) -> Type {
         match self {
             AbstractDeclarator::AbstractBase => base_type,
+            AbstractDeclarator::AbstractArray(inner, cnst) => {
+                let dim = const_to_dim(cnst);
+                let derived_type = Type::Array {
+                    elem_type: Box::new(base_type),
+                    size: dim,
+                };
+                inner.process(derived_type)
+            }
             AbstractDeclarator::AbstractPointer(inner) => {
                 let derived_type = Type::Pointer(Box::new(base_type));
                 inner.process(derived_type)
@@ -175,6 +197,23 @@ fn is_specifier(token: &Token) -> bool {
     }
 }
 
+/* Convert constant to int and check that it's a valid array dimension: must be integer > 0 */
+fn const_to_dim(c: &Exp) -> i64 {
+    let i = match c {
+        Exp::Constant(T::ConstInt(i)) => i64::from(*i),
+        Exp::Constant(T::ConstLong(l)) => i64::from(*l),
+        Exp::Constant(T::ConstUInt(u)) => i64::from(*u),
+        Exp::Constant(T::ConstULong(ul)) => *ul as i64,
+        Exp::Constant(T::ConstDouble(_)) => panic!("Array dimensions must have integer type"),
+        _ => panic!("Array dimensions must be a constant"),
+    };
+    if i > 0 {
+        i
+    } else {
+        panic!("Array dimension must be greater than zero");
+    }
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
@@ -188,6 +227,22 @@ impl Parser {
             Ok(token) => Err(format!("Expected {:?}, found {:?}", expected, token)),
             Err(e) => Err(e),
         }
+    }
+
+    /* { "[" <const> "]" }+ */
+    fn parse_array_dimensions(&mut self) -> Result<Vec<Exp>, String> {
+        let mut dims = Vec::new();
+
+        while let Token::OpenBracket = self.tokens.peek()? {
+            self.tokens.take_token()?;
+
+            let dim = self.parse_constant()?;
+            self.expect(Token::CloseBracket)?;
+
+            dims.push(dim);
+        }
+
+        Ok(dims)
     }
 
     /* getting a list of specifiers */
@@ -341,6 +396,56 @@ impl Parser {
         }
     }
 
+    /* Parsing constants */
+
+    /**
+     * <int> ::= ? A constant token ?
+     * <long> ::= ? An int or long token ?
+     * <uint> ::= ? An unsigned int token ?
+     * <ulong> ::= ? An unsigned int or unsigned long token ?
+     * <double> ::= ? A floating-point constant token ?
+     */
+    fn parse_constant(&mut self) -> Result<Exp, String> {
+        match self.tokens.take_token()? {
+            Token::ConstDouble(d) => Ok(Exp::Constant(T::ConstDouble(d))),
+
+            Token::ConstInt(c) => {
+                if let Some(i) = c.to_i32() {
+                    Ok(Exp::Constant(T::ConstInt(i)))
+                } else if let Some(l) = c.to_i64() {
+                    Ok(Exp::Constant(T::ConstLong(l)))
+                } else {
+                    Err(format!("Constant {} too large to fit into i64", c))
+                }
+            }
+
+            Token::ConstLong(c) => c
+                .to_i64()
+                .map(T::ConstLong)
+                .map(Exp::Constant)
+                .ok_or(format!("Constant {} too large to fit into i64", c)),
+
+            Token::ConstUInt(c) => {
+                if let Some(u) = c.to_u32() {
+                    Ok(Exp::Constant(T::ConstUInt(u)))
+                } else if let Some(ul) = c.to_u64() {
+                    Ok(Exp::Constant(T::ConstULong(ul)))
+                } else {
+                    Err(format!("Constant {} too large to fit into u64", c))
+                }
+            }
+
+            Token::ConstULong(c) => c
+                .to_u64()
+                .map(T::ConstULong)
+                .map(Exp::Constant)
+                .ok_or(format!("Constant {} too large to fit into i64", c)),
+
+            // we only call this when we know the next token is a constant
+            _ => Err("Internal error when parsing constant".to_string()),
+        }
+    }
+
     /* Parsing declarators */
 
     // <simple-declarator> ::= <identifier> | "(" <declarator> ")"
@@ -368,14 +473,28 @@ impl Parser {
         }
     }
 
-    // <direct-declarator> ::= <simple-declarator> [ <param-list> ]
+    /* <direct-declarator> ::= <simple-declarator> [ <declarator-suffix> ]
+     * <declarator-suffix> ::= <param-list> | { "[" <const> "]" }
+     */
     fn parse_direct_declarator(&mut self) -> Result<Declarator, String> {
         let simple_dec = self.parse_simple_declarator()?;
-        if let Token::OpenParen = self.tokens.peek()? {
-            let params = self.parse_param_list()?;
-            Ok(Declarator::FunDeclarator(params, Box::new(simple_dec)))
-        } else {
-            Ok(simple_dec)
+        match self.tokens.peek()? {
+            Token::OpenBracket => {
+                let array_dimensions = self.parse_array_dimensions()?;
+
+                let mut decl = simple_dec;
+
+                for dim in array_dimensions {
+                    decl = Declarator::ArrayDeclarator(Box::new(decl), dim)
+                }
+
+                Ok(decl)
+            }
+            Token::OpenParen => {
+                let params = self.parse_param_list()?;
+                Ok(Declarator::FunDeclarator(params, Box::new(simple_dec)))
+            }
+            _ => Ok(simple_dec),
         }
     }
 
@@ -429,7 +548,7 @@ impl Parser {
             // it's a pointer declarator
             self.tokens.take_token()?;
             let inner = match self.tokens.peek()? {
-                Token::Star | Token::OpenParen => {
+                Token::Star | Token::OpenParen | Token::OpenBracket => {
                     // it's an inner declarator
                     self.parse_abstract_declarator()?
                 }
@@ -442,54 +561,44 @@ impl Parser {
         }
     }
 
-    // <direct-abstract-declarator> ::= "(" <abstract-declarator> ")"
+    /* <direct-abstract-declarator> ::= "(" <abstract-declarator> ")" { "[" <const> "]" }
+     *                                | { "[" <const> "]" }+
+     */
     fn parse_direct_abstract_declarator(&mut self) -> Result<AbstractDeclarator, String> {
-        self.expect(Token::OpenParen)?;
-        let decl = self.parse_abstract_declarator()?;
-        self.expect(Token::CloseParen)?;
-        Ok(decl)
-    }
+        match self.tokens.peek()? {
+            Token::OpenParen => {
+                self.tokens.take_token()?;
+                let abstr_decl = self.parse_abstract_declarator()?;
+                self.expect(Token::CloseParen)?;
+                // inner declarator is followed by possibly-empty list of array dimensions
+                let array_dimensions = self.parse_array_dimensions()?;
 
-    // <const> ::= ? A constant token ?
-    fn parse_constant(&mut self) -> Result<Exp, String> {
-        match self.tokens.take_token()? {
-            Token::ConstDouble(d) => Ok(Exp::Constant(T::ConstDouble(d))),
+                let mut decl = abstr_decl;
 
-            Token::ConstInt(c) => {
-                if let Some(i) = c.to_i32() {
-                    Ok(Exp::Constant(T::ConstInt(i)))
-                } else if let Some(l) = c.to_i64() {
-                    Ok(Exp::Constant(T::ConstLong(l)))
-                } else {
-                    Err(format!("Constant {} too large to fit into i64", c))
+                for dim in array_dimensions {
+                    decl = AbstractDeclarator::AbstractArray(Box::new(decl), dim);
                 }
+
+                Ok(decl)
             }
+            Token::OpenBracket => {
+                let array_dimensions = self.parse_array_dimensions()?;
 
-            Token::ConstLong(c) => c
-                .to_i64()
-                .map(T::ConstLong)
-                .map(Exp::Constant)
-                .ok_or(format!("Constant {} too large to fit into i64", c)),
+                let mut decl = AbstractDeclarator::AbstractBase;
 
-            Token::ConstUInt(c) => {
-                if let Some(u) = c.to_u32() {
-                    Ok(Exp::Constant(T::ConstUInt(u)))
-                } else if let Some(ul) = c.to_u64() {
-                    Ok(Exp::Constant(T::ConstULong(ul)))
-                } else {
-                    Err(format!("Constant {} too large to fit into u64", c))
+                for dim in array_dimensions {
+                    decl = AbstractDeclarator::AbstractArray(Box::new(decl), dim);
                 }
+
+                Ok(decl)
             }
-
-            Token::ConstULong(c) => c
-                .to_u64()
-                .map(T::ConstULong)
-                .map(Exp::Constant)
-                .ok_or(format!("Constant {} too large to fit into i64", c)),
-
-            // we only call this when we know the next token is a constant
-            _ => Err("Internal error when parsing constant".to_string()),
+            other => panic!("Expected an abstract direct declarator, found {:?}", other),
         }
+
+        // self.expect(Token::OpenParen)?;
+        // let decl = self.parse_abstract_declarator()?;
+        // self.expect(Token::CloseParen)?;
+        // Ok(decl)
     }
 
     // <unop> ::= "-" | "~" | "!" | "++" | "--"
@@ -587,6 +696,16 @@ impl Parser {
                 self.tokens.take_token()?;
                 let incr_exp = Exp::PostfixIncr(primary.into());
                 self.postfix_helper(incr_exp)
+            }
+            Token::OpenBracket => {
+                self.tokens.take_token()?;
+                let index = self.parse_expression(0)?;
+                self.expect(Token::CloseBracket)?;
+                let subscript_exp = Exp::Subscript {
+                    ptr: Box::new(primary),
+                    index: Box::new(index),
+                };
+                self.postfix_helper(subscript_exp)
             }
             _ => Ok(primary),
         }
@@ -721,6 +840,41 @@ impl Parser {
             let e = self.parse_expression(0)?;
             self.expect(delim)?;
             Ok(Some(e))
+        }
+    }
+
+    // <initializer> ::= <exp> | "{" <initializer> { "," <initializer> } [ "," ] "}"
+    fn parse_initializer(&mut self) -> Result<Initializer, String> {
+        if self.tokens.peek()? == &Token::OpenBrace {
+            self.tokens.take_token()?;
+            let init_list = self.parse_init_list()?;
+            self.expect(Token::CloseBrace)?;
+            Ok(Initializer::CompoundInit(init_list))
+        } else {
+            let e = self.parse_expression(0)?;
+            Ok(Initializer::SingleInit(e))
+        }
+    }
+
+    fn parse_init_list(&mut self) -> Result<Vec<Box<Initializer>>, String> {
+        let next_init = self.parse_initializer()?;
+
+        match self.tokens.npeek(2) {
+            // trailing comma - consume it and return
+            [Token::Comma, Token::CloseBrace] => {
+                self.tokens.take_token()?;
+                Ok(vec![Box::new(next_init)])
+            }
+            // comma that isn't followed by a brace means there's one more element
+            [Token::Comma, _] => {
+                self.tokens.take_token()?;
+                let mut rest = self.parse_init_list()?;
+                let mut res = Vec::with_capacity(1 + rest.len());
+                res.push(Box::new(next_init));
+                res.append(&mut rest);
+                Ok(res)
+            }
+            _ => Ok(vec![Box::new(next_init)]),
         }
     }
 
@@ -961,13 +1115,13 @@ impl Parser {
                 init: None,
             }),
             Token::EqualSign => {
-                let init = self.parse_expression(0)?;
+                let init = self.parse_initializer()?;
                 self.expect(Token::Semicolon)?;
                 Ok(VariableDeclaration {
                     name,
                     var_type,
                     storage_class,
-                    init: Some(init),
+                    init: Some(Exp::Init(Box::new(init))),
                 })
             }
             other => Err(format!(

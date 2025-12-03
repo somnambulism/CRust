@@ -60,18 +60,20 @@ pub enum Token {
     GreaterThan,
     LessOrEqual,
     GreaterOrEqual,
-    EqualSign,       // =
-    PlusEqual,       // +=
-    HyphenEqual,      // -=
-    StarEqual,       // *=
-    SlashEqual,      // /=
-    PercentEqual,    // %=
-    AmpersandEqual,  // &=
-    PipeEqual,       // |=
-    CaretEqual,      // ^=
+    EqualSign,               // =
+    PlusEqual,               // +=
+    HyphenEqual,             // -=
+    StarEqual,               // *=
+    SlashEqual,              // /=
+    PercentEqual,            // %=
+    AmpersandEqual,          // &=
+    PipeEqual,               // |=
+    CaretEqual,              // ^=
     DoubleLeftBracketEqual,  // <<=
     DoubleRightBracketEqual, // >>=
     QuestionMark,
     Colon,
     Comma,
+    OpenBracket,
+    CloseBracket,
 }

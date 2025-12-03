@@ -7,7 +7,7 @@ use crate::library::{
             VariableDeclaration,
         },
         storage_class::StorageClass,
-        untyped_exp::Exp,
+        untyped_exp::{Exp, Initializer},
     },
     util::unique_ids::MAKE_NAMED_TEMPORARY,
 };
@@ -106,8 +106,13 @@ impl Resolver {
             }
             Exp::Dereference(inner) => Exp::Dereference(self.resolve_exp(inner).into()),
             Exp::AddrOf(inner) => Exp::AddrOf(self.resolve_exp(inner).into()),
+            Exp::Subscript { ptr, index } => Exp::Subscript {
+                ptr: self.resolve_exp(ptr).into(),
+                index: self.resolve_exp(index).into(),
+            },
             // Nothing to do for constant
             Exp::Constant(c) => Exp::Constant(c.clone()),
+            Exp::Init(_) => panic!("Internal error: Unexpected initializer"),
         }
     }
 
@@ -154,6 +159,18 @@ impl Resolver {
         entry.unique_name
     }
 
+    fn resolve_initializer(&self, init: &Initializer) -> Initializer {
+        match init {
+            Initializer::SingleInit(e) => Initializer::SingleInit(self.resolve_exp(e)),
+            Initializer::CompoundInit(inits) => Initializer::CompoundInit(
+                inits
+                    .iter()
+                    .map(|init| self.resolve_initializer(init).into())
+                    .collect(),
+            ),
+        }
+    }
+
     fn resolve_local_var_declaration(
         &mut self,
         VariableDeclaration {
@@ -165,7 +182,12 @@ impl Resolver {
     ) -> VariableDeclaration<Exp> {
         let unique_name = self.resolve_local_var_helper(&name, &storage_class);
 
-        let resolved_init = init.map(|init| self.resolve_exp(&init));
+        let init = match init {
+            Some(Exp::Init(i)) => Some(*i),
+            Some(_) => panic!("Internal error: incorrect initializer"),
+            None => None,
+        };
+        let resolved_init = init.map(|init| Exp::Init(self.resolve_initializer(&init).into()));
 
         VariableDeclaration {
             name: unique_name,

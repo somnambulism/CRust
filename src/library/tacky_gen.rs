@@ -7,7 +7,7 @@ use crate::library::{
             Program as AstProgram, Statement, VariableDeclaration,
         },
         ops::{BinaryOperator as AstBinaryOperator, UnaryOperator as AstUnaryOperator},
-        typed_exp::{InnerExp, TypedExp},
+        typed_exp::{InnerExp, TypedExp}, untyped_exp::Initializer,
     },
     r#const::{INT_ONE, INT_ZERO, T},
     const_convert::const_convert,
@@ -134,6 +134,7 @@ impl TackyGen {
             InnerExp::FunCall { f, args } => self.emit_fun_call(t, f.as_str(), args),
             InnerExp::Dereference(inner) => self.emit_dereference(*inner),
             InnerExp::AddrOf(inner) => self.emit_addr_of(&t, *inner),
+            _ => todo!(),
         }
     }
 
@@ -891,28 +892,29 @@ impl TackyGen {
     }
 
     fn convert_symbols_to_tacky(&mut self) -> Vec<TopLevel> {
-        self.symbol_table
-            .bindings()
-            .iter()
-            .filter_map(|(name, entry)| match &entry.attrs {
-                IdentifierAttrs::StaticAttr { init, global } => match init {
-                    InitialValue::Initial(i) => Some(TopLevel::StaticVariable {
-                        name: name.clone(),
-                        t: entry.t.clone(),
-                        global: *global,
-                        init: *i,
-                    }),
-                    InitialValue::Tentative => Some(TopLevel::StaticVariable {
-                        name: name.clone(),
-                        t: entry.t.clone(),
-                        global: *global,
-                        init: zero(&entry.t),
-                    }),
-                    InitialValue::NoInitializer => None,
-                },
-                _ => None,
-            })
-            .collect()
+        vec![]
+        // self.symbol_table
+        //     .bindings()
+        //     .iter()
+        //     .filter_map(|(name, entry)| match &entry.attrs {
+        //         IdentifierAttrs::StaticAttr { init, global } => match init {
+        //             InitialValue::Initial(i) => Some(TopLevel::StaticVariable {
+        //                 name: name.clone(),
+        //                 t: entry.t.clone(),
+        //                 global: *global,
+        //                 init: *i,
+        //             }),
+        //             InitialValue::Tentative => Some(TopLevel::StaticVariable {
+        //                 name: name.clone(),
+        //                 t: entry.t.clone(),
+        //                 global: *global,
+        //                 init: zero(&entry.t),
+        //             }),
+        //             InitialValue::NoInitializer => None,
+        //         },
+        //         _ => None,
+        //     })
+        //     .collect()
     }
 
     pub fn generate(&mut self, ast: AstProgram<TypedExp>) -> Program {

@@ -277,6 +277,16 @@ impl Lexer {
                 group: 0,
                 converter: |_s| Token::Comma,
             },
+            TokenDef {
+                re: Regex::new(r"^\[").unwrap(),
+                group: 0,
+                converter: |_s| Token::OpenBracket,
+            },
+            TokenDef {
+                re: Regex::new(r"^\]").unwrap(),
+                group: 0,
+                converter: |_s| Token::CloseBracket,
+            },
         ];
         Lexer { token_defs }
     }

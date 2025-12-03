@@ -97,3 +97,4 @@ the source code into C...
 - Long type
 - Unsigned integers
 - Floating point type `double`
+- Pointer type
