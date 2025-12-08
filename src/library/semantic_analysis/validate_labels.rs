@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::library::{
     ast::block_items::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement},
-    ast::untyped_exp::Exp,
+    ast::untyped_exp::{Exp, Initializer},
 };
 
 pub struct LabelsResolver {
@@ -26,8 +26,8 @@ impl LabelsResolver {
 
     fn collect_labels_from_statement(
         &mut self,
-        stmt: Statement<Exp>,
-    ) -> Result<Statement<Exp>, String> {
+        stmt: Statement<Initializer, Exp>,
+    ) -> Result<Statement<Initializer, Exp>, String> {
         match stmt {
             Statement::Goto(lbl) => {
                 self.used.insert(lbl.clone());
@@ -139,8 +139,8 @@ impl LabelsResolver {
 
     fn collect_labels_from_block_items(
         &mut self,
-        items: Vec<BlockItem<Exp>>,
-    ) -> Result<Block<Exp>, String> {
+        items: Vec<BlockItem<Initializer, Exp>>,
+    ) -> Result<Block<Initializer, Exp>, String> {
         let mut out = Vec::with_capacity(items.len());
 
         for item in items.into_iter() {
@@ -160,8 +160,8 @@ impl LabelsResolver {
 }
 
 fn validate_labels_in_fun(
-    fn_decl: FunctionDeclaration<Exp>,
-) -> Result<FunctionDeclaration<Exp>, String> {
+    fn_decl: FunctionDeclaration<Initializer, Exp>,
+) -> Result<FunctionDeclaration<Initializer, Exp>, String> {
     match fn_decl.body {
         Some(block) => {
             let mut labels_resolver = LabelsResolver::new(&fn_decl.name);
@@ -187,15 +187,19 @@ fn validate_labels_in_fun(
     }
 }
 
-fn validate_labels_in_decl(decl: Declaration<Exp>) -> Result<Declaration<Exp>, String> {
+fn validate_labels_in_decl(
+    decl: Declaration<Initializer, Exp>,
+) -> Result<Declaration<Initializer, Exp>, String> {
     match decl {
         Declaration::FunDecl(fd) => Ok(Declaration::FunDecl(validate_labels_in_fun(fd)?)),
         other => Ok(other),
     }
 }
 
-pub fn validate_labels(program: Program<Exp>) -> Result<Program<Exp>, String> {
-    let mut out: Vec<Declaration<Exp>> = Vec::with_capacity(program.0.len());
+pub fn validate_labels(
+    program: Program<Initializer, Exp>,
+) -> Result<Program<Initializer, Exp>, String> {
+    let mut out: Vec<Declaration<Initializer, Exp>> = Vec::with_capacity(program.0.len());
     for decl in program.0.into_iter() {
         out.push(validate_labels_in_decl(decl)?);
     }

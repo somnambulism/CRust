@@ -7,7 +7,7 @@ use crate::library::{
             Program as AstProgram, Statement, VariableDeclaration,
         },
         ops::{BinaryOperator as AstBinaryOperator, UnaryOperator as AstUnaryOperator},
-        typed_exp::{InnerExp, TypedExp}, untyped_exp::Initializer,
+        typed_exp::{Initializer, InnerExp, TypedExp},
     },
     r#const::{INT_ONE, INT_ZERO, T},
     const_convert::const_convert,
@@ -39,6 +39,17 @@ fn mk_ast_const(t: &Type, i: i64) -> TypedExp {
     TypedExp {
         e: InnerExp::Constant(mk_const(t, i)),
         t: t.clone(),
+    }
+}
+
+fn get_ptr_scale(t: &Type) -> i64 {
+    if let Type::Pointer(referenced) = t {
+        referenced.get_size()
+    } else {
+        panic!(
+            "Internal error: tried to get scale of non-pointer type: {:?}",
+            t
+        )
     }
 }
 
@@ -104,18 +115,45 @@ impl TackyGen {
             InnerExp::Constant(c) => (vec![], ExpResult::PlainOperand(TackyVal::Constant(c))),
             InnerExp::Var(v) => (vec![], ExpResult::PlainOperand(TackyVal::Var(v))),
             InnerExp::Unary(AstUnaryOperator::Incr, v) => {
-                self.emit_compound_expression(AstBinaryOperator::Add, *v, mk_ast_const(&t, 1), t)
+                let const_t = if t.is_pointer() {
+                    Type::Long
+                } else {
+                    t.clone()
+                };
+                self.emit_compound_expression(
+                    AstBinaryOperator::Add,
+                    *v,
+                    mk_ast_const(&const_t, 1),
+                    t,
+                )
             }
-            InnerExp::Unary(AstUnaryOperator::Decr, v) => self.emit_compound_expression(
-                AstBinaryOperator::Subtract,
-                *v,
-                mk_ast_const(&t, 1),
-                t,
-            ),
+            InnerExp::Unary(AstUnaryOperator::Decr, v) => {
+                let const_t = if t.is_pointer() {
+                    Type::Long
+                } else {
+                    t.clone()
+                };
+                self.emit_compound_expression(
+                    AstBinaryOperator::Subtract,
+                    *v,
+                    mk_ast_const(&const_t, 1),
+                    t,
+                )
+            }
             InnerExp::Cast { target_type, e } => self.emit_cast_expression(target_type, *e),
             InnerExp::Unary(op, inner) => self.emit_unary_expression(t, op, *inner),
             InnerExp::Binary(AstBinaryOperator::And, e1, e2) => self.emit_and_expression(*e1, *e2),
             InnerExp::Binary(AstBinaryOperator::Or, e1, e2) => self.emit_or_expression(*e1, *e2),
+            InnerExp::Binary(AstBinaryOperator::Add, e1, e2) if t.is_pointer() => {
+                self.emit_pointer_addition(t, *e1, *e2)
+            }
+            InnerExp::Binary(AstBinaryOperator::Subtract, ptr, index) if t.is_pointer() => {
+                self.emit_subtraction_from_pointer(t, *ptr, *index)
+            }
+            InnerExp::Binary(AstBinaryOperator::Subtract, e1, e2) if e1.t.is_pointer() => {
+                // at least one operand is pointer but result isn't, must be subtracting one pointer from another
+                self.emit_pointer_diff(t, *e1, *e2)
+            }
             InnerExp::Binary(op, e1, e2) => self.emit_binary_expression(t, op, *e1, *e2),
             InnerExp::Assignment(lhs, rhs) => self.emit_assignment(*lhs, *rhs),
             InnerExp::CompoundAssignment {
@@ -134,7 +172,7 @@ impl TackyGen {
             InnerExp::FunCall { f, args } => self.emit_fun_call(t, f.as_str(), args),
             InnerExp::Dereference(inner) => self.emit_dereference(*inner),
             InnerExp::AddrOf(inner) => self.emit_addr_of(&t, *inner),
-            _ => todo!(),
+            InnerExp::Subscript { ptr, index } => self.emit_subscript(t, *ptr, *index),
         }
     }
 
@@ -164,12 +202,50 @@ impl TackyGen {
         op: AstBinaryOperator,
         inner: TypedExp,
     ) -> (Vec<Instruction>, ExpResult) {
+        /* If LHS is a variable:
+         *   dst = lhs
+         *   lhs = lhs <op> 1
+         * If LHS is a pointer:
+         *   dst = load(ptr)
+         *   tmp = dst <op> 1
+         *   store(tmp, ptr)
+         *
+         * If LHS has a pointer type, we implement <op> with AddPtr
+         * otherwise with Binary instruction
+         */
         // define var for result - i.e. value of lval BEFORE incr or decr
         let dst = TackyVal::Var(self.create_tmp(inner.clone().t));
         // evaluate inner to get exp_result
         let (mut instrs, lval) = self.emit_tacky_for_exp(inner.clone());
-        let tacky_op = convert_binop(op);
-        let one = TackyVal::Constant(mk_const(&inner.t, 1));
+
+        /* Helper to construct Binary or AddPtr instruction from operands, depending on type
+         * Note that dst is destination of this instruction rather than the whole expression
+         * (i.e. it's the lvalue we're updating, or a temporary we'll then store to that lvalue)
+         */
+        let do_op = |op: AstBinaryOperator, src: TackyVal, dst: TackyVal| {
+            let index = match op {
+                AstBinaryOperator::Add => TackyVal::Constant(mk_const(&Type::Long, 1)),
+                AstBinaryOperator::Subtract => TackyVal::Constant(mk_const(&Type::Long, -1)),
+                _ => panic!("Internal error"),
+            };
+
+            if inner.t.is_pointer() {
+                Instruction::AddPtr {
+                    ptr: src,
+                    index,
+                    scale: get_ptr_scale(&inner.t),
+                    dst,
+                }
+            } else {
+                let one = TackyVal::Constant(mk_const(&inner.t, 1));
+                Instruction::Binary {
+                    op: convert_binop(op),
+                    src1: src,
+                    src2: one,
+                    dst,
+                }
+            }
+        };
 
         // copy result to dst and perform incr or decr
         let oper_instrs = match lval {
@@ -182,12 +258,7 @@ impl TackyGen {
                         src: TackyVal::Var(v.clone()),
                         dst: dst.clone(),
                     },
-                    Instruction::Binary {
-                        op: tacky_op,
-                        src1: TackyVal::Var(v.clone()),
-                        src2: one,
-                        dst: TackyVal::Var(v),
-                    },
+                    do_op(op, TackyVal::Var(v.clone()), TackyVal::Var(v)),
                 ]
             }
             ExpResult::DereferencedPointer(p) => {
@@ -195,18 +266,13 @@ impl TackyGen {
                  * tmp = dst + 1 // or dst - 1
                  * Store(tmp, p)
                  */
-                let tmp = TackyVal::Var(self.create_tmp(inner.t));
+                let tmp = TackyVal::Var(self.create_tmp(inner.clone().t));
                 vec![
                     Instruction::Load {
                         src_ptr: p.clone(),
                         dst: dst.clone(),
                     },
-                    Instruction::Binary {
-                        op: tacky_op,
-                        src1: dst.clone(),
-                        src2: one,
-                        dst: tmp.clone(),
-                    },
+                    do_op(op, dst.clone(), tmp.clone()),
                     Instruction::Store {
                         src: tmp,
                         dst_ptr: p,
@@ -304,6 +370,108 @@ impl TackyGen {
         }
     }
 
+    fn emit_pointer_addition(
+        &mut self,
+        t: Type,
+        e1: TypedExp,
+        e2: TypedExp,
+    ) -> (Vec<Instruction>, ExpResult) {
+        let (eval_v1, v1) = self.emit_tacky_and_convert(e1.clone());
+        let (eval_v2, v2) = self.emit_tacky_and_convert(e2);
+        let dst_name = self.create_tmp(t.clone());
+        let dst = TackyVal::Var(dst_name);
+
+        let (ptr, index) = if t == e1.t { (v1, v2) } else { (v2, v1) };
+
+        let scale = get_ptr_scale(&t);
+        let mut instructions = eval_v1;
+        instructions.extend(eval_v2);
+        instructions.push(Instruction::AddPtr {
+            ptr,
+            index,
+            scale,
+            dst: dst.clone(),
+        });
+
+        (instructions, ExpResult::PlainOperand(dst))
+    }
+
+    fn emit_subscript(
+        &mut self,
+        t: Type,
+        e1: TypedExp,
+        e2: TypedExp,
+    ) -> (Vec<Instruction>, ExpResult) {
+        let (instructions, result) = self.emit_pointer_addition(Type::Pointer(Box::new(t)), e1, e2);
+
+        if let ExpResult::PlainOperand(dst) = result {
+            (instructions, ExpResult::DereferencedPointer(dst))
+        } else {
+            panic!("Internal error: expected result of pointer addition to be lvalue converted")
+        }
+    }
+
+    fn emit_subtraction_from_pointer(
+        &mut self,
+        t: Type,
+        ptr_e: TypedExp,
+        idx_e: TypedExp,
+    ) -> (Vec<Instruction>, ExpResult) {
+        let (eval_v1, ptr) = self.emit_tacky_and_convert(ptr_e);
+        let (eval_v2, index) = self.emit_tacky_and_convert(idx_e);
+        let dst_name = self.create_tmp(t.clone());
+        let dst = TackyVal::Var(dst_name);
+        let negated_index = TackyVal::Var(self.create_tmp(Type::Long));
+        let scale = get_ptr_scale(&t);
+        let mut instructions = eval_v1;
+        instructions.extend(eval_v2);
+        instructions.extend(vec![
+            Instruction::Unary {
+                op: UnaryOperator::Negate,
+                src: index,
+                dst: negated_index.clone(),
+            },
+            Instruction::AddPtr {
+                ptr,
+                index: negated_index,
+                scale,
+                dst: dst.clone(),
+            },
+        ]);
+        (instructions, ExpResult::PlainOperand(dst))
+    }
+
+    fn emit_pointer_diff(
+        &mut self,
+        t: Type,
+        e1: TypedExp,
+        e2: TypedExp,
+    ) -> (Vec<Instruction>, ExpResult) {
+        let (eval_v1, v1) = self.emit_tacky_and_convert(e1.clone());
+        let (eval_v2, v2) = self.emit_tacky_and_convert(e2);
+        let ptr_diff = TackyVal::Var(self.create_tmp(Type::Long));
+        let dst_name = self.create_tmp(t);
+        let dst = TackyVal::Var(dst_name);
+        let scale = TackyVal::Constant(T::ConstLong(get_ptr_scale(&e1.t)));
+        let mut instructions = eval_v1;
+        instructions.extend(eval_v2);
+        instructions.extend(vec![
+            Instruction::Binary {
+                op: BinaryOperator::Subtract,
+                src1: v1,
+                src2: v2,
+                dst: ptr_diff.clone(),
+            },
+            Instruction::Binary {
+                op: BinaryOperator::Divide,
+                src1: ptr_diff,
+                src2: scale,
+                dst: dst.clone(),
+            },
+        ]);
+        (instructions, ExpResult::PlainOperand(dst))
+    }
+
     fn emit_binary_expression(
         &mut self,
         t: Type,
@@ -394,22 +562,52 @@ impl TackyGen {
                 result_t.clone(),
             );
             let cast_tmp_to_lhs =
-                self.get_cast_instruction(tmp.clone(), dst.clone(), result_t, lhs_t);
+                self.get_cast_instruction(tmp.clone(), dst.clone(), result_t.clone(), lhs_t);
             (tmp, vec![cast_lhs_to_tmp], vec![cast_tmp_to_lhs])
         };
 
-        let binary_instr = Instruction::Binary {
-            op: convert_binop(op),
-            src1: result_var.clone(),
-            src2: rhs,
-            dst: result_var,
+        let do_operation = if result_t.is_pointer() {
+            let scale = get_ptr_scale(&result_t);
+
+            match op {
+                AstBinaryOperator::Add => vec![Instruction::AddPtr {
+                    ptr: result_var.clone(),
+                    index: rhs,
+                    scale,
+                    dst: result_var.clone(),
+                }],
+                AstBinaryOperator::Subtract => {
+                    let negated_index = TackyVal::Var(self.create_tmp(Type::Long));
+                    vec![
+                        Instruction::Unary {
+                            op: UnaryOperator::Negate,
+                            src: rhs,
+                            dst: negated_index.clone(),
+                        },
+                        Instruction::AddPtr {
+                            ptr: result_var.clone(),
+                            index: negated_index,
+                            scale,
+                            dst: result_var,
+                        },
+                    ]
+                }
+                _ => panic!("Internal error in compound assignment"),
+            }
+        } else {
+            vec![Instruction::Binary {
+                op: convert_binop(op),
+                src1: result_var.clone(),
+                src2: rhs,
+                dst: result_var,
+            }]
         };
 
         let mut instructions = eval_lhs;
         instructions.extend(eval_rhs);
         instructions.extend(load_instr);
         instructions.extend(cast_to);
-        instructions.push(binary_instr);
+        instructions.extend(do_operation);
         instructions.extend(cast_from);
         instructions.extend(store_instr);
 
@@ -585,7 +783,40 @@ impl TackyGen {
         }
     }
 
-    fn emit_tacky_for_statement(&mut self, stmt: Statement<TypedExp>) -> Vec<Instruction> {
+    fn emit_compound_init(
+        &mut self,
+        name: &str,
+        offset: i64,
+        initializer: Initializer,
+    ) -> Vec<Instruction> {
+        match initializer {
+            Initializer::SingleInit(e) => {
+                let (mut eval_init, v) = self.emit_tacky_and_convert(e);
+                eval_init.push(Instruction::CopyToOffset {
+                    src: v,
+                    dst: name.to_string(),
+                    offset,
+                });
+                eval_init
+            }
+            Initializer::CompoundInit(Type::Array { elem_type, .. }, inits) => inits
+                .iter()
+                .enumerate()
+                .flat_map(|(idx, elem_init)| {
+                    let new_offser = offset + idx as i64 * elem_type.get_size();
+                    self.emit_compound_init(name, new_offser, (**elem_init).clone())
+                })
+                .collect(),
+            Initializer::CompoundInit(_, _) => {
+                panic!("Internal error: compound init has non-array type!")
+            }
+        }
+    }
+
+    fn emit_tacky_for_statement(
+        &mut self,
+        stmt: Statement<Initializer, TypedExp>,
+    ) -> Vec<Instruction> {
         match stmt {
             Statement::Return(e) => {
                 let (mut eval_exp, v) = self.emit_tacky_and_convert(e);
@@ -656,14 +887,20 @@ impl TackyGen {
         }
     }
 
-    fn emit_tacky_for_block_item(&mut self, item: BlockItem<TypedExp>) -> Vec<Instruction> {
+    fn emit_tacky_for_block_item(
+        &mut self,
+        item: BlockItem<Initializer, TypedExp>,
+    ) -> Vec<Instruction> {
         match item {
             BlockItem::S(s) => self.emit_tacky_for_statement(s),
             BlockItem::D(d) => self.emit_local_declaration(d),
         }
     }
 
-    fn emit_local_declaration(&mut self, d: Declaration<TypedExp>) -> Vec<Instruction> {
+    fn emit_local_declaration(
+        &mut self,
+        d: Declaration<Initializer, TypedExp>,
+    ) -> Vec<Instruction> {
         match d {
             Declaration::VarDecl(VariableDeclaration {
                 storage_class: Some(_),
@@ -674,11 +911,11 @@ impl TackyGen {
         }
     }
 
-    fn emit_var_declaration(&mut self, d: VariableDeclaration<TypedExp>) -> Vec<Instruction> {
+    fn emit_var_declaration(&mut self, d: VariableDeclaration<Initializer>) -> Vec<Instruction> {
         match d {
             VariableDeclaration {
                 name,
-                init: Some(e),
+                init: Some(Initializer::SingleInit(e)),
                 var_type,
                 ..
             } => {
@@ -688,10 +925,15 @@ impl TackyGen {
                         e: InnerExp::Var(name),
                         t: var_type,
                     },
-                    e,
+                    e.clone(),
                 );
                 eval_assignment
             }
+            VariableDeclaration {
+                name,
+                init: Some(compound_init),
+                ..
+            } => self.emit_compound_init(name.as_str(), 0, compound_init),
             VariableDeclaration {
                 name: _,
                 init: None,
@@ -706,8 +948,8 @@ impl TackyGen {
     fn emit_tacky_for_if_statement(
         &mut self,
         condition: TypedExp,
-        then_clause: Box<Statement<TypedExp>>,
-        else_clause: Option<Box<Statement<TypedExp>>>,
+        then_clause: Box<Statement<Initializer, TypedExp>>,
+        else_clause: Option<Box<Statement<Initializer, TypedExp>>>,
     ) -> Vec<Instruction> {
         if let None = else_clause {
             // no else clause
@@ -735,7 +977,7 @@ impl TackyGen {
 
     fn emit_tacky_for_do_loop(
         &mut self,
-        body: Statement<TypedExp>,
+        body: Statement<Initializer, TypedExp>,
         condition: TypedExp,
         id: String,
     ) -> Vec<Instruction> {
@@ -757,7 +999,7 @@ impl TackyGen {
     fn emit_tacky_for_while_loop(
         &mut self,
         condition: TypedExp,
-        body: Statement<TypedExp>,
+        body: Statement<Initializer, TypedExp>,
         id: String,
     ) -> Vec<Instruction> {
         let cont_label = continue_label(id.clone());
@@ -777,7 +1019,7 @@ impl TackyGen {
     fn emit_tacky_for_switch(
         &mut self,
         control: TypedExp,
-        body: Statement<TypedExp>,
+        body: Statement<Initializer, TypedExp>,
         id: String,
         cases: Vec<(Option<T>, String)>,
     ) -> Vec<Instruction> {
@@ -824,10 +1066,10 @@ impl TackyGen {
 
     fn emit_tacky_for_for_loop(
         &mut self,
-        init: ForInit<TypedExp>,
+        init: ForInit<Initializer, TypedExp>,
         condition: Option<TypedExp>,
         post: Option<TypedExp>,
-        body: Statement<TypedExp>,
+        body: Statement<Initializer, TypedExp>,
         id: String,
     ) -> Vec<Instruction> {
         // generate some labels
@@ -864,7 +1106,7 @@ impl TackyGen {
         for_init_instructions
     }
 
-    fn emit_fun_declaration(&mut self, fun_decl: Declaration<TypedExp>) -> Option<TopLevel> {
+    fn emit_fun_declaration(&mut self, fun_decl: Declaration<Initializer, TypedExp>) -> Option<TopLevel> {
         match fun_decl {
             Declaration::FunDecl(AstFunction {
                 name,
@@ -892,32 +1134,31 @@ impl TackyGen {
     }
 
     fn convert_symbols_to_tacky(&mut self) -> Vec<TopLevel> {
-        vec![]
-        // self.symbol_table
-        //     .bindings()
-        //     .iter()
-        //     .filter_map(|(name, entry)| match &entry.attrs {
-        //         IdentifierAttrs::StaticAttr { init, global } => match init {
-        //             InitialValue::Initial(i) => Some(TopLevel::StaticVariable {
-        //                 name: name.clone(),
-        //                 t: entry.t.clone(),
-        //                 global: *global,
-        //                 init: *i,
-        //             }),
-        //             InitialValue::Tentative => Some(TopLevel::StaticVariable {
-        //                 name: name.clone(),
-        //                 t: entry.t.clone(),
-        //                 global: *global,
-        //                 init: zero(&entry.t),
-        //             }),
-        //             InitialValue::NoInitializer => None,
-        //         },
-        //         _ => None,
-        //     })
-        //     .collect()
+        self.symbol_table
+            .bindings()
+            .iter()
+            .filter_map(|(name, entry)| match &entry.attrs {
+                IdentifierAttrs::StaticAttr { init, global } => match init {
+                    InitialValue::Initial(i) => Some(TopLevel::StaticVariable {
+                        name: name.clone(),
+                        t: entry.t.clone(),
+                        global: *global,
+                        init: i.clone(),
+                    }),
+                    InitialValue::Tentative => Some(TopLevel::StaticVariable {
+                        name: name.clone(),
+                        t: entry.t.clone(),
+                        global: *global,
+                        init: vec![zero(&entry.t)],
+                    }),
+                    InitialValue::NoInitializer => None,
+                },
+                _ => None,
+            })
+            .collect()
     }
 
-    pub fn generate(&mut self, ast: AstProgram<TypedExp>) -> Program {
+    pub fn generate(&mut self, ast: AstProgram<Initializer, TypedExp>) -> Program {
         let AstProgram(fn_defs) = ast;
         let tacky_fn_defs: Vec<TopLevel> = fn_defs
             .into_iter()

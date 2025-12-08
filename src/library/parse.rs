@@ -22,8 +22,8 @@ use super::{
     tokens::Token,
 };
 
-type Block = BlockStruct<Exp>;
-type Program = ProgramStruct<Exp>;
+type Block = BlockStruct<Initializer, Exp>;
+type Program = ProgramStruct<Initializer, Exp>;
 
 // first parse declarators of this type, then convert to AST
 #[derive(Clone, Debug)]
@@ -893,7 +893,7 @@ impl Parser {
     //              | "default" ":" <statement>
     //              | <exp> ";"
     //              | ";"
-    fn parse_statement(&mut self) -> Result<Statement<Exp>, String> {
+    fn parse_statement(&mut self) -> Result<Statement<Initializer, Exp>, String> {
         match self.tokens.npeek(2) {
             [Token::KWIf, _] => self.parse_if_statement(),
             [Token::OpenBrace, _] => Ok(Statement::Compound(self.parse_block()?)),
@@ -962,7 +962,7 @@ impl Parser {
     }
 
     // "if" "(" <exp> ")" <statement> [ "else" <statement> ]
-    fn parse_if_statement(&mut self) -> Result<Statement<Exp>, String> {
+    fn parse_if_statement(&mut self) -> Result<Statement<Initializer, Exp>, String> {
         self.expect(Token::KWIf)?;
         self.expect(Token::OpenParen)?;
         let condition = self.parse_expression(0)?;
@@ -986,7 +986,7 @@ impl Parser {
     }
 
     // "do" <statement> "while" "(" <exp> ")" ";"
-    fn parse_do_loop(&mut self) -> Result<Statement<Exp>, String> {
+    fn parse_do_loop(&mut self) -> Result<Statement<Initializer, Exp>, String> {
         self.expect(Token::KWDo)?;
         let body = Box::new(self.parse_statement()?);
         self.expect(Token::KWWhile)?;
@@ -1002,7 +1002,7 @@ impl Parser {
     }
 
     // "while" "(" <exp> ")" <statement>
-    fn parse_while_loop(&mut self) -> Result<Statement<Exp>, String> {
+    fn parse_while_loop(&mut self) -> Result<Statement<Initializer, Exp>, String> {
         self.expect(Token::KWWhile)?;
         self.expect(Token::OpenParen)?;
         let condition = self.parse_expression(0)?;
@@ -1016,7 +1016,7 @@ impl Parser {
     }
 
     // "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement>
-    fn parse_for_loop(&mut self) -> Result<Statement<Exp>, String> {
+    fn parse_for_loop(&mut self) -> Result<Statement<Initializer, Exp>, String> {
         self.expect(Token::KWFor)?;
         self.expect(Token::OpenParen)?;
         let init = self.parse_for_init()?;
@@ -1033,7 +1033,7 @@ impl Parser {
     }
 
     // "switch" "(" <exp> ")" <statement>
-    fn parse_switch_statement(&mut self) -> Result<Statement<Exp>, String> {
+    fn parse_switch_statement(&mut self) -> Result<Statement<Initializer, Exp>, String> {
         self.expect(Token::KWSwitch)?;
         self.expect(Token::OpenParen)?;
         let control = self.parse_expression(0)?;
@@ -1048,7 +1048,7 @@ impl Parser {
     }
 
     // <block_item> ::= <statement> | <declaration>
-    fn parse_block_item(&mut self) -> Result<BlockItem<Exp>, String> {
+    fn parse_block_item(&mut self) -> Result<BlockItem<Initializer, Exp>, String> {
         if is_specifier(self.tokens.peek()?) {
             Ok(BlockItem::D(self.parse_declaration()?))
         } else {
@@ -1075,7 +1075,7 @@ impl Parser {
         storage_class: Option<StorageClass>,
         name: String,
         params: Vec<String>,
-    ) -> Result<FunctionDeclaration<Exp>, String> {
+    ) -> Result<FunctionDeclaration<Initializer, Exp>, String> {
         let body = match self.tokens.peek()? {
             Token::OpenBrace => Some(self.parse_block()?),
             Token::Semicolon => {
@@ -1106,7 +1106,7 @@ impl Parser {
         var_type: Type,
         storage_class: Option<StorageClass>,
         name: String,
-    ) -> Result<VariableDeclaration<Exp>, String> {
+    ) -> Result<VariableDeclaration<Initializer>, String> {
         match self.tokens.take_token()? {
             Token::Semicolon => Ok(VariableDeclaration {
                 name,
@@ -1121,7 +1121,7 @@ impl Parser {
                     name,
                     var_type,
                     storage_class,
-                    init: Some(Exp::Init(Box::new(init))),
+                    init: Some(init),
                 })
             }
             other => Err(format!(
@@ -1133,7 +1133,7 @@ impl Parser {
 
     // <declaration> ::= <variable-declaration> | <function-declaration>
     // parse until declarator, then call appropriate function to finish parsing
-    fn parse_declaration(&mut self) -> Result<Declaration<Exp>, String> {
+    fn parse_declaration(&mut self) -> Result<Declaration<Initializer, Exp>, String> {
         let specifiers = self.parse_specifier_list()?;
         let (base_typ, storage_class) = self.parse_type_and_storage_class(specifiers)?;
         let declarator = self.parse_declarator()?;
@@ -1155,7 +1155,7 @@ impl Parser {
         }
     }
 
-    fn parse_variable_declaration(&mut self) -> Result<VariableDeclaration<Exp>, String> {
+    fn parse_variable_declaration(&mut self) -> Result<VariableDeclaration<Initializer>, String> {
         match self.parse_declaration()? {
             Declaration::VarDecl(vd) => Ok(vd),
             Declaration::FunDecl(_) => {
@@ -1165,7 +1165,7 @@ impl Parser {
     }
 
     // <for-init> ::= <variable-declaration> | [ <exp> ] ";"
-    fn parse_for_init(&mut self) -> Result<ForInit<Exp>, String> {
+    fn parse_for_init(&mut self) -> Result<ForInit<Initializer, Exp>, String> {
         if is_specifier(self.tokens.peek()?) {
             Ok(ForInit::InitDecl(self.parse_variable_declaration()?))
         } else {

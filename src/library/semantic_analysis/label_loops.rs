@@ -1,8 +1,8 @@
 use crate::library::{
-    ast::block_items::{
-        Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement,
+    ast::{
+        block_items::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement},
+        untyped_exp::{Exp, Initializer},
     },
-    ast::untyped_exp::Exp,
     util::unique_ids::make_label,
 };
 
@@ -19,7 +19,10 @@ impl LoopsLabeller {
         }
     }
 
-    fn label_statement(&mut self, statement: Statement<Exp>) -> Statement<Exp> {
+    fn label_statement(
+        &mut self,
+        statement: Statement<Initializer, Exp>,
+    ) -> Statement<Initializer, Exp> {
         match statement {
             Statement::Break(_) => {
                 if let Some(l) = &self.current_break_id {
@@ -141,14 +144,17 @@ impl LoopsLabeller {
         }
     }
 
-    fn label_block_item(&mut self, item: BlockItem<Exp>) -> BlockItem<Exp> {
+    fn label_block_item(
+        &mut self,
+        item: BlockItem<Initializer, Exp>,
+    ) -> BlockItem<Initializer, Exp> {
         match item {
             BlockItem::S(s) => BlockItem::S(self.label_statement(s)),
             BlockItem::D(_) => item,
         }
     }
 
-    fn label_block(&mut self, Block(b): Block<Exp>) -> Block<Exp> {
+    fn label_block(&mut self, Block(b): Block<Initializer, Exp>) -> Block<Initializer, Exp> {
         Block(
             b.into_iter()
                 .map(|item| self.label_block_item(item))
@@ -156,7 +162,7 @@ impl LoopsLabeller {
         )
     }
 
-    fn label_decl(&mut self, decl: Declaration<Exp>) -> Declaration<Exp> {
+    fn label_decl(&mut self, decl: Declaration<Initializer, Exp>) -> Declaration<Initializer, Exp> {
         match decl {
             Declaration::FunDecl(func) => {
                 self.current_break_id = None;
@@ -170,7 +176,10 @@ impl LoopsLabeller {
         }
     }
 
-    pub fn label_loops(&mut self, Program(decls): Program<Exp>) -> Program<Exp> {
+    pub fn label_loops(
+        &mut self,
+        Program(decls): Program<Initializer, Exp>,
+    ) -> Program<Initializer, Exp> {
         Program(
             decls
                 .into_iter()

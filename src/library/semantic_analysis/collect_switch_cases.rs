@@ -3,7 +3,7 @@ use std::fmt;
 use crate::library::{
     ast::{
         block_items::{Block, BlockItem, Declaration, FunctionDeclaration, Program, Statement},
-        typed_exp::{InnerExp, TypedExp},
+        typed_exp::{InnerExp, TypedExp, Initializer},
     },
     r#const::T,
     const_convert::const_convert,
@@ -50,8 +50,8 @@ impl SwitchAnalyzer {
         &mut self,
         key: Option<T>,
         lbl: &str,
-        inner: Statement<TypedExp>,
-    ) -> Result<(Statement<TypedExp>, String), SwitchAnalysisError> {
+        inner: Statement<Initializer, TypedExp>,
+    ) -> Result<(Statement<Initializer, TypedExp>, String), SwitchAnalysisError> {
         let (switch_t, cases) = self
             .ctx
             .as_mut()
@@ -76,8 +76,8 @@ impl SwitchAnalyzer {
 
     fn analyze_statement(
         &mut self,
-        stmt: Statement<TypedExp>,
-    ) -> Result<Statement<TypedExp>, SwitchAnalysisError> {
+        stmt: Statement<Initializer, TypedExp>,
+    ) -> Result<Statement<Initializer, TypedExp>, SwitchAnalysisError> {
         match stmt {
             Statement::Default(inner, _) => {
                 let (new_stmt, default_id) =
@@ -176,8 +176,8 @@ impl SwitchAnalyzer {
 
     fn analyze_block_item(
         &mut self,
-        item: BlockItem<TypedExp>,
-    ) -> Result<BlockItem<TypedExp>, SwitchAnalysisError> {
+        item: BlockItem<Initializer, TypedExp>,
+    ) -> Result<BlockItem<Initializer, TypedExp>, SwitchAnalysisError> {
         match item {
             BlockItem::S(stmt) => Ok(BlockItem::S(self.analyze_statement(stmt)?)),
             decl => Ok(decl),
@@ -186,8 +186,8 @@ impl SwitchAnalyzer {
 
     fn analyze_block(
         &mut self,
-        Block(items): Block<TypedExp>,
-    ) -> Result<Block<TypedExp>, SwitchAnalysisError> {
+        Block(items): Block<Initializer, TypedExp>,
+    ) -> Result<Block<Initializer, TypedExp>, SwitchAnalysisError> {
         let mut out = Vec::with_capacity(items.len());
 
         for item in items.into_iter() {
@@ -199,8 +199,8 @@ impl SwitchAnalyzer {
 
     fn analyze_function_def(
         &mut self,
-        fun_decl: FunctionDeclaration<TypedExp>,
-    ) -> Result<FunctionDeclaration<TypedExp>, SwitchAnalysisError> {
+        fun_decl: FunctionDeclaration<Initializer, TypedExp>,
+    ) -> Result<FunctionDeclaration<Initializer, TypedExp>, SwitchAnalysisError> {
         match fun_decl.body {
             Some(b) => {
                 let blk = self.analyze_block(b)?;
@@ -215,8 +215,8 @@ impl SwitchAnalyzer {
 
     fn analyze_decl(
         &mut self,
-        d: Declaration<TypedExp>,
-    ) -> Result<Declaration<TypedExp>, SwitchAnalysisError> {
+        d: Declaration<Initializer, TypedExp>,
+    ) -> Result<Declaration<Initializer, TypedExp>, SwitchAnalysisError> {
         match d {
             Declaration::FunDecl(fd) => Ok(Declaration::FunDecl(self.analyze_function_def(fd)?)),
             other => Ok(other),
@@ -225,8 +225,8 @@ impl SwitchAnalyzer {
 
     pub fn analyze_program(
         &mut self,
-        program: Program<TypedExp>,
-    ) -> Result<Program<TypedExp>, SwitchAnalysisError> {
+        program: Program<Initializer, TypedExp>,
+    ) -> Result<Program<Initializer, TypedExp>, SwitchAnalysisError> {
         let Program(decls) = program;
         let analyzed = decls
             .into_iter()
@@ -237,8 +237,8 @@ impl SwitchAnalyzer {
 }
 
 pub fn analyze_switches(
-    program: Program<TypedExp>,
-) -> Result<Program<TypedExp>, SwitchAnalysisError> {
+    program: Program<Initializer, TypedExp>,
+) -> Result<Program<Initializer, TypedExp>, SwitchAnalysisError> {
     let mut analyzer = SwitchAnalyzer::new();
     analyzer.analyze_program(program)
 }

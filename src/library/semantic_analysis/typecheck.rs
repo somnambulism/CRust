@@ -254,7 +254,6 @@ impl TypeChecker {
             Exp::Dereference(inner) => self.typecheck_dereference(inner),
             Exp::AddrOf(inner) => self.typecheck_addr_of(inner),
             Exp::Subscript { ptr, index } => self.typecheck_subscript(ptr, index),
-            Exp::Init(_) => panic!("Internal error: should not typecheck init in typecheck_exp"),
         }
     }
 
@@ -741,7 +740,11 @@ impl TypeChecker {
         }
     }
 
-    fn typecheck_block(&mut self, ret_type: &Type, b: &Block<Exp>) -> Block<TypedExp> {
+    fn typecheck_block(
+        &mut self,
+        ret_type: &Type,
+        b: &Block<Initializer, Exp>,
+    ) -> Block<TypedInitializer, TypedExp> {
         Block(
             b.0.iter()
                 .map(|item| self.typecheck_block_item(ret_type, item))
@@ -752,8 +755,8 @@ impl TypeChecker {
     fn typecheck_block_item(
         &mut self,
         ret_type: &Type,
-        block_item: &BlockItem<Exp>,
-    ) -> BlockItem<TypedExp> {
+        block_item: &BlockItem<Initializer, Exp>,
+    ) -> BlockItem<TypedInitializer, TypedExp> {
         match block_item {
             BlockItem::S(s) => BlockItem::S(self.typecheck_statement(ret_type, s)),
             BlockItem::D(d) => BlockItem::D(self.typecheck_local_decl(d)),
@@ -763,8 +766,8 @@ impl TypeChecker {
     fn typecheck_statement(
         &mut self,
         ret_type: &Type,
-        statement: &Statement<Exp>,
-    ) -> Statement<TypedExp> {
+        statement: &Statement<Initializer, Exp>,
+    ) -> Statement<TypedInitializer, TypedExp> {
         match statement {
             Statement::Return(e) => {
                 let typed_e = self.typecheck_and_convert(e);
@@ -874,7 +877,10 @@ impl TypeChecker {
         }
     }
 
-    fn typecheck_local_decl(&mut self, decl: &Declaration<Exp>) -> Declaration<TypedExp> {
+    fn typecheck_local_decl(
+        &mut self,
+        decl: &Declaration<Initializer, Exp>,
+    ) -> Declaration<TypedInitializer, TypedExp> {
         match decl {
             Declaration::VarDecl(vd) => Declaration::VarDecl(self.typecheck_local_var_decl(vd)),
             Declaration::FunDecl(fd) => Declaration::FunDecl(self.typecheck_fn_decl(fd)),
@@ -883,8 +889,8 @@ impl TypeChecker {
 
     fn typecheck_local_var_decl(
         &mut self,
-        var_decl: &VariableDeclaration<Exp>,
-    ) -> VariableDeclaration<TypedExp> {
+        var_decl: &VariableDeclaration<Initializer>,
+    ) -> VariableDeclaration<TypedInitializer> {
         let VariableDeclaration {
             name,
             var_type,
@@ -923,9 +929,8 @@ impl TypeChecker {
             Some(StorageClass::Static) => {
                 let zero_init = InitialValue::Initial(vec![zero(var_type)]);
                 let static_init = match init {
-                    Some(Exp::Init(i)) => to_static_init(var_type, i),
+                    Some(i) => to_static_init(var_type, i),
                     None => zero_init.clone(),
-                    _ => panic!("Incorrect static init statement"),
                 };
                 self.symbol_table
                     .add_static_var(name, var_type.clone(), false, static_init);
@@ -940,19 +945,11 @@ impl TypeChecker {
             }
             None => {
                 self.symbol_table.add_automatic_var(name, var_type.clone());
-                let initializer = match init {
-                    Some(Exp::Init(i)) => Some(i),
-                    Some(_) => panic!("Incorrect init"),
-                    None => None,
-                };
                 VariableDeclaration {
                     name: name.clone(),
                     var_type: var_type.clone(),
                     storage_class: *storage_class,
-                    init: Option::map(initializer.as_ref(), |e| TypedExp {
-                        e: InnerExp::Init(Box::new(self.typecheck_init(var_type, e))),
-                        t: var_type.clone(),
-                    }),
+                    init: Option::map(init.as_ref(), |i| self.typecheck_init(var_type, i)),
                 }
             }
         }
@@ -960,8 +957,8 @@ impl TypeChecker {
 
     fn typecheck_fn_decl(
         &mut self,
-        func_decl: &FunctionDeclaration<Exp>,
-    ) -> FunctionDeclaration<TypedExp> {
+        func_decl: &FunctionDeclaration<Initializer, Exp>,
+    ) -> FunctionDeclaration<TypedInitializer, TypedExp> {
         let FunctionDeclaration {
             name,
             fun_type,
@@ -1061,8 +1058,8 @@ impl TypeChecker {
 
     fn typecheck_file_scope_var_decl(
         &mut self,
-        var_decl: &VariableDeclaration<Exp>,
-    ) -> VariableDeclaration<TypedExp> {
+        var_decl: &VariableDeclaration<Initializer>,
+    ) -> VariableDeclaration<TypedInitializer> {
         let VariableDeclaration {
             name,
             var_type,
@@ -1076,8 +1073,7 @@ impl TypeChecker {
             InitialValue::Tentative
         };
         let static_init = match init {
-            Some(Exp::Init(i)) => to_static_init(var_type, i),
-            Some(_) => panic!("Internal error: incorrect init for file scope variable declaration"),
+            Some(i) => to_static_init(var_type, i),
             None => default_init,
         };
 
@@ -1134,7 +1130,10 @@ impl TypeChecker {
         }
     }
 
-    fn typecheck_global_decl(&mut self, decl: &Declaration<Exp>) -> Declaration<TypedExp> {
+    fn typecheck_global_decl(
+        &mut self,
+        decl: &Declaration<Initializer, Exp>,
+    ) -> Declaration<TypedInitializer, TypedExp> {
         match decl {
             Declaration::FunDecl(fd) => Declaration::FunDecl(self.typecheck_fn_decl(fd)),
             Declaration::VarDecl(vd) => {
@@ -1143,7 +1142,10 @@ impl TypeChecker {
         }
     }
 
-    pub fn typecheck(&mut self, program: &Program<Exp>) -> Program<TypedExp> {
+    pub fn typecheck(
+        &mut self,
+        program: &Program<Initializer, Exp>,
+    ) -> Program<TypedInitializer, TypedExp> {
         Program(
             program
                 .0

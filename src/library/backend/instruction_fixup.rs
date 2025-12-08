@@ -25,7 +25,10 @@ fn is_constant(operand: &Operand) -> bool {
 }
 
 fn is_memory(operand: &Operand) -> bool {
-    matches!(operand, Operand::Memory(..) | Operand::Data(_))
+    matches!(
+        operand,
+        Operand::Memory(..) | Operand::Data(_) | Operand::Indexed { .. }
+    )
 }
 
 fn is_xmm(reg: &Reg) -> bool {

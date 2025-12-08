@@ -91,6 +91,17 @@ pub enum Instruction {
         src: TackyVal,
         dst_ptr: TackyVal,
     },
+    AddPtr {
+        ptr: TackyVal,
+        index: TackyVal,
+        scale: i64,
+        dst: TackyVal,
+    },
+    CopyToOffset {
+        src: TackyVal,
+        dst: String,
+        offset: i64,
+    },
     Jump(String),
     JumpIfZero(TackyVal, String),
     JumpIfNotZero(TackyVal, String),
@@ -114,7 +125,7 @@ pub enum TopLevel {
         name: String,
         t: Type,
         global: bool,
-        init: StaticInit,
+        init: Vec<StaticInit>,
     },
 }
 

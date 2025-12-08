@@ -27,6 +27,8 @@ pub enum Operand {
     Pseudo(String),
     Memory(Reg, isize),
     Data(String),
+    PseudoMem(String, isize),
+    Indexed { base: Reg, index: Reg, scale: i64 },
 }
 
 #[derive(Clone, Debug)]
@@ -72,6 +74,7 @@ pub enum AsmType {
     Longword,
     Quadword,
     Double,
+    ByteArray { size: usize, alignment: usize },
 }
 
 #[derive(Clone, Debug)]
@@ -113,7 +116,7 @@ pub enum TopLevel {
         name: String,
         alignment: i8,
         global: bool,
-        init: StaticInit,
+        init: Vec<StaticInit>,
     },
     StaticConstant {
         name: String,

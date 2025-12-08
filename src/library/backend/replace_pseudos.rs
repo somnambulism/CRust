@@ -20,6 +20,16 @@ impl ReplacementState {
         }
     }
 
+    fn calculate_offset(&mut self, name: &str, symbols: &SymbolTable) -> isize {
+        let size = symbols.get_size(name);
+        let alignment = symbols.get_alignment(name);
+        let new_offset =
+            round_away_from_zero(alignment as isize, self.current_offset - size as isize);
+        self.current_offset = new_offset;
+        self.offset_map.insert(name.to_string(), new_offset);
+        new_offset
+    }
+
     fn replace_operand(&mut self, operand: &Operand, symbols: &SymbolTable) -> Operand {
         match operand {
             Operand::Pseudo(s) => {
@@ -32,18 +42,29 @@ impl ReplacementState {
                     // We haven't already assigned it a stack slot;
                     // assign it and update state
                     } else {
-                        let size = symbols.get_size(s);
-                        let alignment = symbols.get_alignment(s);
-                        let new_offset = round_away_from_zero(
-                            alignment as isize,
-                            self.current_offset - size as isize,
-                        );
-                        self.offset_map.insert(s.to_string(), new_offset);
-                        self.current_offset = new_offset;
+                        let new_offset = self.calculate_offset(&s, symbols);
                         Operand::Memory(Reg::BP, new_offset)
                     }
                 }
             }
+            Operand::PseudoMem(s, offset) if symbols.is_static(&s) => {
+                if offset == &0 {
+                    Operand::Data(s.to_string())
+                } else {
+                    panic!("Internal error: shouldn't have static variables with non-zero offset ")
+                }
+            }
+            Operand::PseudoMem(s, offset) => {
+                // We've already assigned this operand a stack slot
+                if let Some(&var_offset) = self.offset_map.get(s) {
+                    Operand::Memory(Reg::BP, *offset + var_offset)
+                } else {
+                    // assign s a stack slot and add its offset to the offset within s to get new operand
+                    let new_var_offset = self.calculate_offset(s, symbols);
+                    Operand::Memory(Reg::BP, *offset + new_var_offset)
+                }
+            }
+            // not a pseudo, return as is
             other => other.clone(),
         }
     }

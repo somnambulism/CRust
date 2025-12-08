@@ -84,7 +84,7 @@ impl SymbolTable {
         }
     }
 
-    pub fn get_size(&self, var_name: &str) -> i8 {
+    pub fn get_size(&self, var_name: &str) -> usize {
         match self.table.get(var_name).unwrap() {
             Entry::Obj {
                 t: AsmType::Longword,
@@ -94,13 +94,17 @@ impl SymbolTable {
                 t: AsmType::Quadword | AsmType::Double,
                 ..
             } => 8,
+            Entry::Obj {
+                t: AsmType::ByteArray { size, .. },
+                ..
+            } => *size,
             Entry::Fun { .. } => {
                 panic!("Internal error: {} is a function, not an object", var_name);
             }
         }
     }
 
-    pub fn get_alignment(&self, var_name: &str) -> i8 {
+    pub fn get_alignment(&self, var_name: &str) -> usize {
         match self.table.get(var_name).unwrap() {
             Entry::Obj {
                 t: AsmType::Longword,
@@ -110,6 +114,10 @@ impl SymbolTable {
                 t: AsmType::Quadword | AsmType::Double,
                 ..
             } => 8,
+            Entry::Obj {
+                t: AsmType::ByteArray { alignment, .. },
+                ..
+            } => *alignment,
             Entry::Fun { .. } => {
                 panic!("Internal error: {} is a function, not an object", var_name);
             }

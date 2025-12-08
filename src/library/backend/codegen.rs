@@ -46,8 +46,11 @@ fn convert_type(t: &Type) -> AsmType {
         Type::Int | Type::UInt => AsmType::Longword,
         Type::Long | Type::ULong | Type::Pointer(_) => AsmType::Quadword,
         Type::Double => AsmType::Double,
+        Type::Array { .. } => AsmType::ByteArray {
+            size: t.get_size() as usize,
+            alignment: t.get_alignment() as usize,
+        },
         Type::FunType { .. } => panic!("Internal error, converting function type to assembly"),
-        _ => todo!(),
     }
 }
 
@@ -120,6 +123,28 @@ fn convert_cond_code(signed: bool, cond_code: &TackyBinaryOp) -> CondCode {
     }
 }
 
+// Special case logic to get type/alignment of array; array variables w/ size >=16 bytes have alignment of 16
+fn get_var_alignment(t: Type) -> usize {
+    if let Type::Array { .. } = t
+        && t.get_size() >= 16
+    {
+        16
+    } else {
+        t.get_alignment() as usize
+    }
+}
+
+fn convert_var_type(t: &Type) -> AsmType {
+    if let Type::Array { .. } = t {
+        AsmType::ByteArray {
+            size: t.get_size() as usize,
+            alignment: get_var_alignment(t.clone()),
+        }
+    } else {
+        convert_type(t)
+    }
+}
+
 impl CodeGen {
     pub fn new(symbols: SymbolTable) -> Self {
         CodeGen {
@@ -154,7 +179,13 @@ impl CodeGen {
             TackyVal::Constant(T::ConstUInt(u)) => Operand::Imm(*u as i64),
             TackyVal::Constant(T::ConstULong(ul)) => Operand::Imm(*ul as i64),
             TackyVal::Constant(T::ConstDouble(d)) => Operand::Data(self.add_constant(8, *d)),
-            TackyVal::Var(v) => Operand::Pseudo(v.to_string()),
+            TackyVal::Var(v) => {
+                if self.symbol_table.get(v).t.is_array() {
+                    Operand::PseudoMem(v.to_string(), 0)
+                } else {
+                    Operand::Pseudo(v.to_string())
+                }
+            }
         }
     }
 
@@ -759,6 +790,86 @@ impl CodeGen {
                     ]
                 }
             }
+            TackyInstruction::CopyToOffset { src, dst, offset } => vec![Instruction::Mov(
+                self.asm_type(src),
+                self.convert_val(src),
+                Operand::PseudoMem(dst.to_string(), *offset as isize),
+            )],
+            TackyInstruction::AddPtr {
+                ptr,
+                index: TackyVal::Constant(T::ConstLong(c)),
+                scale,
+                dst,
+            } => {
+                // note that typechecker converts index to long
+                vec![
+                    Instruction::Mov(
+                        AsmType::Quadword,
+                        self.convert_val(ptr),
+                        Operand::Reg(Reg::R9),
+                    ),
+                    Instruction::Lea(
+                        Operand::Memory(Reg::R9, (c * scale) as isize),
+                        self.convert_val(dst),
+                    ),
+                ]
+            }
+            TackyInstruction::AddPtr {
+                ptr,
+                index,
+                scale,
+                dst,
+            } => {
+                if *scale == 1 || *scale == 2 || *scale == 4 || *scale == 8 {
+                    vec![
+                        Instruction::Mov(
+                            AsmType::Quadword,
+                            self.convert_val(ptr),
+                            Operand::Reg(Reg::R8),
+                        ),
+                        Instruction::Mov(
+                            AsmType::Quadword,
+                            self.convert_val(index),
+                            Operand::Reg(Reg::R9),
+                        ),
+                        Instruction::Lea(
+                            Operand::Indexed {
+                                base: Reg::R8,
+                                index: Reg::R9,
+                                scale: *scale,
+                            },
+                            self.convert_val(dst),
+                        ),
+                    ]
+                } else {
+                    vec![
+                        Instruction::Mov(
+                            AsmType::Quadword,
+                            self.convert_val(ptr),
+                            Operand::Reg(Reg::R8),
+                        ),
+                        Instruction::Mov(
+                            AsmType::Quadword,
+                            self.convert_val(index),
+                            Operand::Reg(Reg::R9),
+                        ),
+                        Instruction::Binary {
+                            op: BinaryOperator::Mult,
+                            t: AsmType::Quadword,
+                            src: Operand::Imm(*scale),
+                            dst: Operand::Reg(Reg::R9),
+                        },
+                        Instruction::Lea(
+                            Operand::Indexed {
+                                base: Reg::R8,
+                                index: Reg::R9,
+                                scale: 1,
+                            },
+                            self.convert_val(dst),
+                        ),
+                    ]
+                }
+            }
         }
     }
 
@@ -775,19 +886,6 @@ impl CodeGen {
                         Operand::Reg(reg.clone()),
                         param.operand.clone(),
                     )]);
-                    // let offset = 16 + (idx as isize) * 8;
-                    // let stk = Operand::Stack(offset);
-                    // instructions.push(Instruction::Mov(
-                    //     param.asm_type.clone(),
-                    //     Operand::Reg(reg.clone()),
-                    //     stk.clone(),
-                    // ));
-                    // // Move from stack slot to pseudo for IR
-                    // instructions.push(Instruction::Mov(
-                    //     param.asm_type.clone(),
-                    //     stk,
-                    //     param.operand.clone(),
-                    // ));
                 }
                 ArgLoc::Stack => {
                     // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
@@ -801,49 +899,6 @@ impl CodeGen {
                 }
             }
         }
-
-        // Windows x64 ABI: shadow space (32 bytes) is always reserved
-        // Move register arguments to stack slots
-        // for (idx, param) in params
-        //     .iter()
-        //     .filter(|param| matches!(param.loc, ArgLoc::Reg(_)))
-        //     .enumerate()
-        // {
-        //     // let reg = &PARAM_PASSING_REGS[idx];
-        //     // Windows: first arg at 16(%rbp), then 24, 32, 40
-        //     let offset = 16 + (idx as isize) * 8;
-        //     let stk = Operand::Stack(offset);
-        //     // let param_t = self.asm_type(&TackyVal::Var(param.to_string()));
-        //     let reg = match &param.loc {
-        //         ArgLoc::Reg(r) => r,
-        //         ArgLoc::Stack => panic!("XEP"),
-        //     };
-        //     instructions.push(Instruction::Mov(
-        //         param.asm_type.clone(),
-        //         Operand::Reg(reg.clone()),
-        //         stk.clone(),
-        //     ));
-        //     // Move from stack slot to pseudo for IR
-        //     instructions.push(Instruction::Mov(
-        //         param.asm_type.clone(),
-        //         stk,
-        //         param.operand.clone(),
-        //     ));
-        // }
-        // // Stack arguments: 5th arg at 48(%rbp), 6th at 56(%rbp), ...
-        // for (idx, param) in params
-        //     .iter()
-        //     .filter(|param| matches!(param.loc, ArgLoc::Stack))
-        //     .enumerate()
-        // {
-        //     let offset = 16 + ((4 + idx) as isize) * 8;
-        //     let stk = Operand::Stack(offset);
-        //     instructions.push(Instruction::Mov(
-        //         param.asm_type.clone(),
-        //         stk,
-        //         param.operand.clone(),
-        //     ));
-        // }
 
         instructions
     }
@@ -879,8 +934,8 @@ impl CodeGen {
             } => AssemblyTopLevel::StaticVariable {
                 name: name.to_string(),
                 global: *global,
-                alignment: t.get_alignment(),
-                init: *init,
+                alignment: get_var_alignment(t.clone()) as i8,
+                init: init.clone(),
             },
         }
     }
@@ -942,7 +997,7 @@ fn convert_symbol(assembly_symbols: &mut BackendSymbolTable, entry: &Entry, name
         Entry {
             t,
             attrs: IdentifierAttrs::StaticAttr { .. },
-        } => assembly_symbols.add_var(name, &convert_type(t), true),
-        Entry { t, .. } => assembly_symbols.add_var(name, &convert_type(t), false),
+        } => assembly_symbols.add_var(name, &convert_var_type(t), true),
+        Entry { t, .. } => assembly_symbols.add_var(name, &convert_var_type(t), false),
     }
 }

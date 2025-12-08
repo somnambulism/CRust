@@ -22,6 +22,9 @@ fn suffix(t: &AsmType) -> String {
         AsmType::Longword => "l".to_string(),
         AsmType::Quadword => "q".to_string(),
         AsmType::Double => "sd".to_string(),
+        AsmType::ByteArray { .. } => {
+            panic!("Internal error: shouldn't have byte array type in instruction")
+        }
     }
 }
 
@@ -188,6 +191,9 @@ impl CodeEmitter {
                 AsmType::Longword => show_long_reg(r),
                 AsmType::Quadword => show_quadword_reg(r),
                 AsmType::Double => show_double_reg(r),
+                AsmType::ByteArray { .. } => {
+                    panic!("Internal error: can't store non-scalar operand in register")
+                }
             },
             Operand::Imm(i) => format!("${}", i),
             Operand::Memory(r, 0) => format!("({})", show_quadword_reg(r)),
@@ -200,8 +206,17 @@ impl CodeEmitter {
                 };
                 format!("{}(%rip)", lbl)
             }
+            Operand::Indexed { base, index, scale } => {
+                format!(
+                    "({}, {}, {})",
+                    show_quadword_reg(base),
+                    show_quadword_reg(index),
+                    scale
+                )
+            }
             // printing out pseudoregister is only for debugging
             Operand::Pseudo(name) => format!("%{}", name),
+            Operand::PseudoMem(name, offset) => format!("{}({})", offset, name),
         }
     }
 
@@ -359,8 +374,8 @@ impl CodeEmitter {
                 self.show_operand(t, dst)
             ),
             Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
-            Instruction::Cdq(AsmType::Double) => {
-                panic!("Intenral error: can't apply cdq to double type")
+            Instruction::Cdq(AsmType::Double | AsmType::ByteArray { .. }) => {
+                panic!("Intenral error: can't apply cdq to non-integer type")
             }
             Instruction::MovZeroExtend(..) => {
                 panic!(
@@ -378,17 +393,6 @@ impl CodeEmitter {
         }
     }
 
-    fn emit_zero_init(&mut self, init: &StaticInit) -> Result<()> {
-        match init {
-            StaticInit::IntInit(_) | StaticInit::UIntInit(_) => writeln!(self.file, "\t.zero 4"),
-            StaticInit::LongInit(_) | StaticInit::ULongInit(_) => writeln!(self.file, "\t.zero 8"),
-            StaticInit::DoubleInit(_) => {
-                panic!("Internal error: should never use zeroinit for doubles")
-            }
-            _ => todo!(),
-        }
-    }
-
     fn emit_init(&mut self, init: &StaticInit) -> Result<()> {
         match init {
             StaticInit::IntInit(i) => writeln!(self.file, "\t.long {}", i),
@@ -396,7 +400,8 @@ impl CodeEmitter {
             StaticInit::UIntInit(u) => writeln!(self.file, "\t.long {}", u),
             StaticInit::ULongInit(l) => writeln!(self.file, "\t.quad {}", l),
             StaticInit::DoubleInit(d) => writeln!(self.file, "\t.quad {}", d.to_bits()),
-            _ => todo!(),
+            // a partly initialized array can include a mix of zero and non-zero inits
+            StaticInit::ZeroInit(byte_count) => writeln!(self.file, "\t.zero {}", byte_count),
         }
     }
 
@@ -456,13 +461,15 @@ impl CodeEmitter {
                 alignment,
             }
             // is_zero is false for all doubles
-            if init.is_zero() => {
+            if init.iter().all(|i| i.is_zero()) => {
                 let label = self.show_label(&name);
                 self.emit_global_directive(*global, &label)?;
                 writeln!(self.file, "\t.bss")?;
                 writeln!(self.file, "\t{} {}", self.align_directive(), alignment)?;
                 writeln!(self.file, "{}:", label)?;
-                self.emit_zero_init(&init)?;
+                for i in init.iter() {
+                    self.emit_init(i)?;
+                }
                 writeln!(self.file)?;
                 Ok(())
             }
@@ -477,11 +484,18 @@ impl CodeEmitter {
                 writeln!(self.file, "\t.data")?;
                 writeln!(self.file, "\t{} {}", self.align_directive(), alignment)?;
                 writeln!(self.file, "{}:", label)?;
-                self.emit_init(&init)?;
+                for i in init.iter() {
+                    self.emit_init(i)?;
+                }
                 writeln!(self.file)?;
                 Ok(())
             }
-            TopLevel::StaticConstant { name, alignment, init } => self.emit_constant(name, *alignment, init)
+            TopLevel::StaticConstant {
+                name,
+                alignment,
+                init,
+            } => self.emit_constant(name, *alignment, init),
+            _ => todo!(),
         }
     }
 

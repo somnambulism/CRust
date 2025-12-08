@@ -112,7 +112,6 @@ impl Resolver {
             },
             // Nothing to do for constant
             Exp::Constant(c) => Exp::Constant(c.clone()),
-            Exp::Init(_) => panic!("Internal error: Unexpected initializer"),
         }
     }
 
@@ -178,16 +177,11 @@ impl Resolver {
             var_type,
             init,
             storage_class,
-        }: VariableDeclaration<Exp>,
-    ) -> VariableDeclaration<Exp> {
+        }: VariableDeclaration<Initializer>,
+    ) -> VariableDeclaration<Initializer> {
         let unique_name = self.resolve_local_var_helper(&name, &storage_class);
 
-        let init = match init {
-            Some(Exp::Init(i)) => Some(*i),
-            Some(_) => panic!("Internal error: incorrect initializer"),
-            None => None,
-        };
-        let resolved_init = init.map(|init| Exp::Init(self.resolve_initializer(&init).into()));
+        let resolved_init = init.map(|init| self.resolve_initializer(&init).into());
 
         VariableDeclaration {
             name: unique_name,
@@ -197,7 +191,7 @@ impl Resolver {
         }
     }
 
-    fn resolve_for_init(&mut self, init: ForInit<Exp>) -> ForInit<Exp> {
+    fn resolve_for_init(&mut self, init: ForInit<Initializer, Exp>) -> ForInit<Initializer, Exp> {
         match init {
             ForInit::InitExp(e) => ForInit::InitExp(self.resolve_optional_exp(e)),
             ForInit::InitDecl(d) => {
@@ -207,7 +201,7 @@ impl Resolver {
         }
     }
 
-    fn resolve_statement(&mut self, statement: Statement<Exp>) -> Statement<Exp> {
+    fn resolve_statement(&mut self, statement: Statement<Initializer, Exp>) -> Statement<Initializer, Exp> {
         match statement {
             Statement::Return(e) => Statement::Return(self.resolve_exp(&e)),
             Statement::Expression(e) => Statement::Expression(self.resolve_exp(&e)),
@@ -294,7 +288,7 @@ impl Resolver {
         }
     }
 
-    fn resolve_block_item(&mut self, item: BlockItem<Exp>) -> BlockItem<Exp> {
+    fn resolve_block_item(&mut self, item: BlockItem<Initializer, Exp>) -> BlockItem<Initializer, Exp> {
         match item {
             BlockItem::S(s) => {
                 // resolving a statement does not change the variable map
@@ -310,7 +304,7 @@ impl Resolver {
         }
     }
 
-    fn resolve_block(&mut self, Block(items): Block<Exp>) -> Block<Exp> {
+    fn resolve_block(&mut self, Block(items): Block<Initializer, Exp>) -> Block<Initializer, Exp> {
         let resolved_items = items
             .into_iter()
             .map(|item| self.resolve_block_item(item))
@@ -318,7 +312,7 @@ impl Resolver {
         Block(resolved_items)
     }
 
-    fn resolve_local_declaration(&mut self, d: Declaration<Exp>) -> Declaration<Exp> {
+    fn resolve_local_declaration(&mut self, d: Declaration<Initializer, Exp>) -> Declaration<Initializer, Exp> {
         match d {
             Declaration::VarDecl(vd) => {
                 let resolved_vd = self.resolve_local_var_declaration(vd);
@@ -349,8 +343,8 @@ impl Resolver {
 
     fn resolve_function_declaration(
         &mut self,
-        func: FunctionDeclaration<Exp>,
-    ) -> FunctionDeclaration<Exp> {
+        func: FunctionDeclaration<Initializer, Exp>,
+    ) -> FunctionDeclaration<Initializer, Exp> {
         if let Some(VarEntry {
             from_current_scope: true,
             has_linkage: false,
@@ -380,8 +374,8 @@ impl Resolver {
 
     fn resolve_file_scope_variable_declaration(
         &mut self,
-        vd: VariableDeclaration<Exp>,
-    ) -> VariableDeclaration<Exp> {
+        vd: VariableDeclaration<Initializer>,
+    ) -> VariableDeclaration<Initializer> {
         let name = vd.name.clone();
         self.id_map.insert(
             name.clone(),
@@ -394,7 +388,7 @@ impl Resolver {
         vd
     }
 
-    fn resolve_global_declaration(&mut self, d: Declaration<Exp>) -> Declaration<Exp> {
+    fn resolve_global_declaration(&mut self, d: Declaration<Initializer, Exp>) -> Declaration<Initializer, Exp> {
         match d {
             Declaration::FunDecl(fd) => {
                 let fd = self.resolve_function_declaration(fd);
@@ -407,7 +401,7 @@ impl Resolver {
         }
     }
 
-    pub fn resolve(&mut self, Program(decls): Program<Exp>) -> Program<Exp> {
+    pub fn resolve(&mut self, Program(decls): Program<Initializer, Exp>) -> Program<Initializer, Exp> {
         Program(
             decls
                 .into_iter()

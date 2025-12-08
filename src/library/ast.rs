@@ -38,7 +38,7 @@ pub mod ops {
 // Exp AST definition without type info
 pub mod untyped_exp {
     use super::ops::{BinaryOperator, UnaryOperator};
-    use crate::library::ast::ExpTrait;
+    use crate::library::ast::{ExpTrait, InitTrait};
     use crate::library::r#const::T;
     use crate::library::types::Type;
 
@@ -71,7 +71,6 @@ pub mod untyped_exp {
             ptr: Box<Exp>,
             index: Box<Exp>,
         },
-        Init(Box<Initializer>),
     }
 
     impl ExpTrait for Exp {}
@@ -81,14 +80,15 @@ pub mod untyped_exp {
         SingleInit(Exp),
         CompoundInit(Vec<Box<Initializer>>),
     }
+
+    impl InitTrait for Initializer {}
 }
 
 // Exp AST definition with type info
 pub mod typed_exp {
     use crate::library::{
         ast::{
-            ExpTrait,
-            ops::{BinaryOperator, UnaryOperator},
+            ExpTrait, InitTrait, ops::{BinaryOperator, UnaryOperator}
         },
         r#const::T,
         types::Type,
@@ -133,7 +133,6 @@ pub mod typed_exp {
             ptr: Box<TypedExp>,
             index: Box<TypedExp>,
         },
-        Init(Box<Initializer>),
     }
 
     #[derive(Debug, PartialEq, Clone)]
@@ -159,9 +158,13 @@ pub mod typed_exp {
         SingleInit(TypedExp),
         CompoundInit(Type, Vec<Box<Initializer>>),
     }
+
+    impl InitTrait for Initializer {}
 }
 
 pub trait ExpTrait: Debug + PartialEq {}
+
+pub trait InitTrait: Debug + PartialEq {}
 
 pub mod storage_class {
     #[derive(Debug, PartialEq, Clone, Copy)]
@@ -172,94 +175,94 @@ pub mod storage_class {
 }
 
 pub mod block_items {
-    use crate::library::{r#const::T, types::Type};
+    use crate::library::{ast::InitTrait, r#const::T, types::Type};
 
     use super::{ExpTrait, storage_class::StorageClass};
 
     #[derive(Debug, PartialEq)]
-    pub struct VariableDeclaration<Exp: ExpTrait> {
+    pub struct VariableDeclaration<Init: InitTrait> {
         pub name: String,
         pub var_type: Type,
-        pub init: Option<Exp>,
+        pub init: Option<Init>,
         pub storage_class: Option<StorageClass>,
     }
 
     #[derive(Debug, PartialEq)]
-    pub enum ForInit<Exp: ExpTrait> {
-        InitDecl(VariableDeclaration<Exp>),
+    pub enum ForInit<Init: InitTrait, Exp: ExpTrait> {
+        InitDecl(VariableDeclaration<Init>),
         InitExp(Option<Exp>),
     }
 
     #[derive(Debug, PartialEq)]
-    pub enum Statement<Exp: ExpTrait> {
+    pub enum Statement<Init: InitTrait, Exp: ExpTrait> {
         Return(Exp),
         Expression(Exp),
         If {
             condition: Exp,
-            then_clause: Box<Statement<Exp>>,
-            else_clause: Option<Box<Statement<Exp>>>,
+            then_clause: Box<Statement<Init, Exp>>,
+            else_clause: Option<Box<Statement<Init, Exp>>>,
         },
-        Compound(Block<Exp>),
+        Compound(Block<Init, Exp>),
         Break(String),
         Continue(String),
         While {
             condition: Exp,
-            body: Box<Statement<Exp>>,
+            body: Box<Statement<Init, Exp>>,
             id: String,
         },
         DoWhile {
-            body: Box<Statement<Exp>>,
+            body: Box<Statement<Init, Exp>>,
             condition: Exp,
             id: String,
         },
         For {
-            init: ForInit<Exp>,
+            init: ForInit<Init, Exp>,
             condition: Option<Exp>,
             post: Option<Exp>,
-            body: Box<Statement<Exp>>,
+            body: Box<Statement<Init, Exp>>,
             id: String,
         },
         Switch {
             control: Exp,
-            body: Box<Statement<Exp>>,
+            body: Box<Statement<Init, Exp>>,
             id: String,
             cases: Vec<(Option<T>, String)>,
         },
         Case(
             Exp, // exp must be constant; validate during semantic analysis
-            Box<Statement<Exp>>,
+            Box<Statement<Init, Exp>>,
             String,
         ),
-        Default(Box<Statement<Exp>>, String),
+        Default(Box<Statement<Init, Exp>>, String),
         Null,
-        LabelledStatement(String, Box<Statement<Exp>>),
+        LabelledStatement(String, Box<Statement<Init, Exp>>),
         Goto(String),
     }
 
     #[derive(Debug, PartialEq)]
-    pub enum BlockItem<Exp: ExpTrait> {
-        S(Statement<Exp>),
-        D(Declaration<Exp>),
+    pub enum BlockItem<Init: InitTrait, Exp: ExpTrait> {
+        S(Statement<Init, Exp>),
+        D(Declaration<Init, Exp>),
     }
 
     #[derive(Debug, PartialEq)]
-    pub struct Block<Exp: ExpTrait>(pub Vec<BlockItem<Exp>>);
+    pub struct Block<Init: InitTrait, Exp: ExpTrait>(pub Vec<BlockItem<Init, Exp>>);
 
     #[derive(Debug, PartialEq)]
-    pub struct FunctionDeclaration<Exp: ExpTrait> {
+    pub struct FunctionDeclaration<Init: InitTrait, Exp: ExpTrait> {
         pub name: String,
         pub fun_type: Type,
         pub params: Vec<String>,
-        pub body: Option<Block<Exp>>,
+        pub body: Option<Block<Init, Exp>>,
         pub storage_class: Option<StorageClass>,
     }
 
     #[derive(Debug, PartialEq)]
-    pub enum Declaration<Exp: ExpTrait> {
-        FunDecl(FunctionDeclaration<Exp>),
-        VarDecl(VariableDeclaration<Exp>),
+    pub enum Declaration<Init: InitTrait, Exp: ExpTrait> {
+        FunDecl(FunctionDeclaration<Init, Exp>),
+        VarDecl(VariableDeclaration<Init>),
     }
 
     #[derive(Debug, PartialEq)]
-    pub struct Program<Exp: ExpTrait>(pub Vec<Declaration<Exp>>);
+    pub struct Program<Init: InitTrait, Exp: ExpTrait>(pub Vec<Declaration<Init, Exp>>);
 }
