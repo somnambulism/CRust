@@ -98,3 +98,4 @@ the source code into C...
 - Unsigned integers
 - Floating point type `double`
 - Pointer type
+- Arrays
