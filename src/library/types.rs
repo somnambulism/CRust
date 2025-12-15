@@ -1,5 +1,8 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
+    Char,
+    SChar,
+    UChar,
     Int,
     Long,
     UInt,
@@ -19,6 +22,7 @@ pub enum Type {
 impl Type {
     pub fn get_size(&self) -> i64 {
         match self {
+            &Type::Char | &Type::SChar | &Type::UChar => 1,
             &Type::Int | &Type::UInt => 4,
             &Type::Long | &Type::ULong | &Type::Double | &Type::Pointer(_) => 8,
             &Type::Array {
@@ -33,6 +37,7 @@ impl Type {
 
     pub fn get_alignment(&self) -> i8 {
         match self {
+            &Type::Char | &Type::SChar | &Type::UChar => 1,
             &Type::Int | &Type::UInt => 4,
             &Type::Long | &Type::ULong | &Type::Double | &Type::Pointer(_) => 8,
             &Type::Array { ref elem_type, .. } => elem_type.get_alignment(),
@@ -44,8 +49,8 @@ impl Type {
 
     pub fn is_signed(&self) -> bool {
         match self {
-            &Type::Int | &Type::Long => true,
-            &Type::UInt | &Type::ULong | &Type::Pointer(_) => false,
+            &Type::Int | &Type::Long | &Type::Char | &Type::SChar => true,
+            &Type::UInt | &Type::ULong | &Type::Pointer(_) | &Type::UChar => false,
             &Type::Double | &Type::FunType { .. } | &Type::Array { .. } => {
                 panic!(
                     "Internal error: signedness doesn't make sense for type {:?}",
@@ -60,16 +65,36 @@ impl Type {
     }
 
     pub fn is_integer(&self) -> bool {
-        matches!(self, Type::Int | Type::UInt | Type::Long | Type::ULong)
+        match self {
+            Type::Char
+            | Type::UChar
+            | Type::SChar
+            | Type::Int
+            | Type::UInt
+            | Type::Long
+            | Type::ULong => true,
+            Type::Double | Type::Array { .. } | Type::Pointer(_) | Type::FunType { .. } => false,
+        }
     }
 
     pub fn is_array(&self) -> bool {
         matches!(self, Type::Array { .. })
     }
 
+    pub fn is_character(&self) -> bool {
+        self.get_size() == 1
+    }
+
     pub fn is_arithmetic(&self) -> bool {
         match self {
-            Type::Int | Type::UInt | Type::Long | Type::ULong | Type::Double => true,
+            Type::Int
+            | Type::UInt
+            | Type::Long
+            | Type::ULong
+            | Type::Char
+            | Type::UChar
+            | Type::SChar
+            | Type::Double => true,
             Type::FunType { .. } | Type::Pointer(..) | Type::Array { .. } => false,
         }
     }

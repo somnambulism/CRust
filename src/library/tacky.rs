@@ -17,8 +17,8 @@ pub enum BinaryOperator {
     BitwiseAnd,
     BitwiseOr,
     Xor,
-    LeftShift,
-    RightShift,
+    BitshiftLeft,
+    BitshiftRight,
     Equal,
     NotEqual,
     LessThan,
@@ -126,6 +126,11 @@ pub enum TopLevel {
         t: Type,
         global: bool,
         init: Vec<StaticInit>,
+    },
+    StaticConstant {
+        name: String,
+        t: Type,
+        init: StaticInit,
     },
 }
 

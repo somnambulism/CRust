@@ -13,6 +13,8 @@ use crate::library::{
  */
 fn const_to_int64(c: &T) -> i64 {
     match c {
+        T::ConstChar(c) => *c as i64,
+        T::ConstUChar(uc) => *uc as i64,
         T::ConstInt(i) => *i as i64,
         T::ConstUInt(ui) => *ui as i64,
         T::ConstLong(l) => *l,
@@ -27,13 +29,17 @@ fn const_to_int64(c: &T) -> i64 {
  */
 fn const_of_int64(v: i64, target_type: &Type) -> T {
     match target_type {
+        Type::Char | Type::SChar => T::ConstChar(v as i8),
+        Type::UChar => T::ConstUChar(v as u8),
         Type::Int => T::ConstInt(v as i32),
         Type::Long => T::ConstLong(v),
         Type::UInt => T::ConstUInt(v as u32),
-        Type::ULong => T::ConstULong(v as u64),
+        Type::ULong | Type::Pointer(_) => T::ConstULong(v as u64),
         Type::Double => T::ConstDouble(v as f64),
-        Type::FunType { .. } => panic!("Internal error: can't convert to function type"),
-        _ => todo!(),
+        Type::FunType { .. } | Type::Array { .. } => panic!(
+            "Internal error: can't convert constant to non-scalae type {:?}",
+            target_type
+        ),
     }
 }
 

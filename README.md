@@ -99,3 +99,5 @@ the source code into C...
 - Floating point type `double`
 - Pointer type
 - Arrays
+- Characters
+- Strings

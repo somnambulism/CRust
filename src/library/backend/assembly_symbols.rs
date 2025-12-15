@@ -87,6 +87,9 @@ impl SymbolTable {
     pub fn get_size(&self, var_name: &str) -> usize {
         match self.table.get(var_name).unwrap() {
             Entry::Obj {
+                t: AsmType::Byte, ..
+            } => 1,
+            Entry::Obj {
                 t: AsmType::Longword,
                 ..
             } => 4,
@@ -106,6 +109,9 @@ impl SymbolTable {
 
     pub fn get_alignment(&self, var_name: &str) -> usize {
         match self.table.get(var_name).unwrap() {
+            Entry::Obj {
+                t: AsmType::Byte, ..
+            } => 1,
             Entry::Obj {
                 t: AsmType::Longword,
                 ..

@@ -80,15 +80,35 @@ impl ReplacementState {
                 let new_dst = self.replace_operand(dst, symbols);
                 Instruction::Mov(t.clone(), new_src, new_dst)
             }
-            Instruction::Movsx(src, dst) => {
+            Instruction::Movsx {
+                src_type,
+                dst_type,
+                src,
+                dst,
+            } => {
                 let new_src = self.replace_operand(src, symbols);
                 let new_dst = self.replace_operand(dst, symbols);
-                Instruction::Movsx(new_src, new_dst)
+                Instruction::Movsx {
+                    src_type: src_type.clone(),
+                    dst_type: dst_type.clone(),
+                    src: new_src,
+                    dst: new_dst,
+                }
             }
-            Instruction::MovZeroExtend(src, dst) => {
+            Instruction::MovZeroExtend {
+                src_type,
+                dst_type,
+                src,
+                dst,
+            } => {
                 let new_src = self.replace_operand(src, symbols);
                 let new_dst = self.replace_operand(dst, symbols);
-                Instruction::MovZeroExtend(new_src, new_dst)
+                Instruction::MovZeroExtend {
+                    src_type: src_type.clone(),
+                    dst_type: dst_type.clone(),
+                    src: new_src,
+                    dst: new_dst,
+                }
             }
             Instruction::Lea(src, dst) => {
                 let new_src = self.replace_operand(src, symbols);

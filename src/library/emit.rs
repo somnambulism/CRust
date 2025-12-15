@@ -19,6 +19,7 @@ pub struct CodeEmitter {
 
 fn suffix(t: &AsmType) -> String {
     match t {
+        AsmType::Byte => "b".to_string(),
         AsmType::Longword => "l".to_string(),
         AsmType::Quadword => "q".to_string(),
         AsmType::Double => "sd".to_string(),
@@ -139,6 +140,25 @@ fn show_cond_code(cond_code: &CondCode) -> String {
     }
 }
 
+fn escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+
+    for &b in s.as_bytes() {
+        let c = b as char;
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else {
+            // use octal escape for everything except alphanumeric values
+            out.push('\\');
+            out.push(char::from(b'0' + ((b >> 6) & 7)));
+            out.push(char::from(b'0' + ((b >> 3) & 7)));
+            out.push(char::from(b'0' + (b & 7)));
+        }
+    }
+
+    out
+}
+
 impl CodeEmitter {
     pub fn new(platform: Target, filename: &str, symbols: SymbolTable) -> Result<Self> {
         let file = File::create(filename)?;
@@ -188,6 +208,7 @@ impl CodeEmitter {
     fn show_operand(&self, t: &AsmType, operand: &Operand) -> String {
         match operand {
             Operand::Reg(r) => match t {
+                AsmType::Byte => show_byte_reg(r),
                 AsmType::Longword => show_long_reg(r),
                 AsmType::Quadword => show_quadword_reg(r),
                 AsmType::Double => show_double_reg(r),
@@ -351,12 +372,34 @@ impl CodeEmitter {
             Instruction::Call(f) => {
                 writeln!(self.file, "\tcall {}", self.show_fun_name(f))
             }
-            Instruction::Movsx(src, dst) => {
+            Instruction::Movsx {
+                src_type,
+                dst_type,
+                src,
+                dst,
+            } => {
                 writeln!(
                     self.file,
-                    "\tmovslq {}, {}",
-                    self.show_operand(&AsmType::Longword, src),
-                    self.show_operand(&AsmType::Quadword, dst)
+                    "\tmovs{}{} {}, {}",
+                    suffix(src_type),
+                    suffix(dst_type),
+                    self.show_operand(src_type, src),
+                    self.show_operand(dst_type, dst)
+                )
+            }
+            Instruction::MovZeroExtend {
+                src_type,
+                dst_type,
+                src,
+                dst,
+            } => {
+                writeln!(
+                    self.file,
+                    "\tmovz{}{} {}, {}",
+                    suffix(src_type),
+                    suffix(dst_type),
+                    self.show_operand(src_type, src),
+                    self.show_operand(dst_type, dst)
                 )
             }
             Instruction::Cvtsi2sd(t, src, dst) => writeln!(
@@ -374,13 +417,8 @@ impl CodeEmitter {
                 self.show_operand(t, dst)
             ),
             Instruction::Ret => writeln!(self.file, "\tmovq %rbp, %rsp\n\tpopq %rbp\n\tret"),
-            Instruction::Cdq(AsmType::Double | AsmType::ByteArray { .. }) => {
-                panic!("Intenral error: can't apply cdq to non-integer type")
-            }
-            Instruction::MovZeroExtend(..) => {
-                panic!(
-                    "Internal error: MovZeroExtend should have been removed in instruction rewrite pass"
-                )
+            Instruction::Cdq(AsmType::Double | AsmType::Byte | AsmType::ByteArray { .. }) => {
+                panic!("Intenral error: can't apply cdq a byte or non-integer type")
             }
         }
     }
@@ -399,16 +437,24 @@ impl CodeEmitter {
             StaticInit::LongInit(l) => writeln!(self.file, "\t.quad {}", l),
             StaticInit::UIntInit(u) => writeln!(self.file, "\t.long {}", u),
             StaticInit::ULongInit(l) => writeln!(self.file, "\t.quad {}", l),
+            StaticInit::CharInit(c) => writeln!(self.file, "\t.byte {}", c),
+            StaticInit::UCharInit(uc) => writeln!(self.file, "\t.byte {}", uc),
             StaticInit::DoubleInit(d) => writeln!(self.file, "\t.quad {}", d.to_bits()),
             // a partly initialized array can include a mix of zero and non-zero inits
             StaticInit::ZeroInit(byte_count) => writeln!(self.file, "\t.zero {}", byte_count),
+            StaticInit::StringInit(s, true) => writeln!(self.file, "\t.asciz \"{}\"", escape(s)),
+            StaticInit::StringInit(s, false) => writeln!(self.file, "\t.ascii \"{}\"", escape(s)),
+            StaticInit::PointerInit(lbl) => {
+                writeln!(self.file, "\t.quad {}", self.show_local_label(lbl))
+            }
         }
     }
 
     fn emit_constant(&mut self, name: &str, alignment: i8, init: &StaticInit) -> Result<()> {
-        let constant_section_name = match self.platform {
-            Target::Linux => ".section .rodata",
-            Target::OsX => {
+        let constant_section_name = match (&self.platform, init) {
+            (Target::Linux, _) => ".section .rodata",
+            (Target::OsX, StaticInit::StringInit(..)) => ".cstring",
+            (Target::OsX, _) => {
                 if alignment == 8 {
                     ".literal 8"
                 } else if alignment == 16 {
@@ -420,7 +466,7 @@ impl CodeEmitter {
                     )
                 }
             }
-            Target::Windows => ".section .rdata",
+            (Target::Windows, _) => ".section .rdata",
         };
         writeln!(self.file, "\t{}", constant_section_name)?;
         writeln!(self.file, "\t{} {}", self.align_directive(), alignment)?;
@@ -495,7 +541,6 @@ impl CodeEmitter {
                 alignment,
                 init,
             } => self.emit_constant(name, *alignment, init),
-            _ => todo!(),
         }
     }
 

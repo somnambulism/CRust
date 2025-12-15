@@ -3,6 +3,7 @@ use indexmap::map;
 use indexmap::IndexMap;
 
 use crate::library::initializers::StaticInit;
+use crate::library::util::unique_ids::MAKE_NAMED_TEMPORARY;
 
 use super::types::Type;
 
@@ -17,6 +18,7 @@ pub enum InitialValue {
 pub enum IdentifierAttrs {
     FunAttr { defined: bool, global: bool },
     StaticAttr { init: InitialValue, global: bool },
+    ConstAttr(StaticInit),
     LocalAttr,
 }
 
@@ -87,11 +89,27 @@ impl SymbolTable {
         }
     }
 
+    pub fn add_string(&mut self, s: &str) -> String {
+        let str_id = MAKE_NAMED_TEMPORARY("string");
+        let t = Type::Array {
+            elem_type: Box::new(Type::Char),
+            size: s.len() as i64 + 1,
+        };
+        self.table.insert(
+            str_id.clone(),
+            Entry {
+                t,
+                attrs: IdentifierAttrs::ConstAttr(StaticInit::StringInit(s.to_string(), true)),
+            },
+        );
+        str_id
+    }
+
     pub fn is_global(&self, name: &str) -> bool {
         self.table
             .get(name)
             .map_or(false, |entry| match &entry.attrs {
-                IdentifierAttrs::LocalAttr => false,
+                IdentifierAttrs::LocalAttr | IdentifierAttrs::ConstAttr(_) => false,
                 IdentifierAttrs::StaticAttr { global, .. } => *global,
                 IdentifierAttrs::FunAttr { global, .. } => *global,
             })

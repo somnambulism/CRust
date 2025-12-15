@@ -45,6 +45,7 @@ fn convert_type(t: &Type) -> AsmType {
     match t {
         Type::Int | Type::UInt => AsmType::Longword,
         Type::Long | Type::ULong | Type::Pointer(_) => AsmType::Quadword,
+        Type::Char | Type::SChar | Type::UChar => AsmType::Byte,
         Type::Double => AsmType::Double,
         Type::Array { .. } => AsmType::ByteArray {
             size: t.get_size() as usize,
@@ -73,8 +74,8 @@ fn convert_binop(op: &TackyBinaryOp) -> BinaryOperator {
         TackyBinaryOp::BitwiseAnd => BinaryOperator::And,
         TackyBinaryOp::BitwiseOr => BinaryOperator::Or,
         TackyBinaryOp::Xor => BinaryOperator::Xor,
-        TackyBinaryOp::LeftShift => BinaryOperator::Sal,
-        TackyBinaryOp::RightShift => BinaryOperator::Sar,
+        TackyBinaryOp::BitshiftLeft => BinaryOperator::Sal,
+        TackyBinaryOp::BitshiftRight => BinaryOperator::Sar,
         TackyBinaryOp::Mod
         | TackyBinaryOp::Equal
         | TackyBinaryOp::NotEqual
@@ -83,6 +84,28 @@ fn convert_binop(op: &TackyBinaryOp) -> BinaryOperator {
         | TackyBinaryOp::GreaterThan
         | TackyBinaryOp::LessThan => {
             panic!("Internal error: not a binary assembly instruction")
+        }
+    }
+}
+
+fn convert_shift_op(signed: bool, op: &TackyBinaryOp) -> BinaryOperator {
+    match op {
+        TackyBinaryOp::BitshiftLeft => {
+            if signed {
+                BinaryOperator::Sal
+            } else {
+                BinaryOperator::Shl
+            }
+        }
+        TackyBinaryOp::BitshiftRight => {
+            if signed {
+                BinaryOperator::Sar
+            } else {
+                BinaryOperator::Shr
+            }
+        }
+        _ => {
+            panic!("Internal error: not a shift operation")
         }
     }
 }
@@ -174,6 +197,8 @@ impl CodeGen {
 
     fn convert_val(&mut self, val: &TackyVal) -> Operand {
         match val {
+            TackyVal::Constant(T::ConstChar(c)) => Operand::Imm(*c as i64),
+            TackyVal::Constant(T::ConstUChar(uc)) => Operand::Imm(*uc as i64),
             TackyVal::Constant(T::ConstInt(i)) => Operand::Imm(*i as i64),
             TackyVal::Constant(T::ConstLong(l)) => Operand::Imm(*l),
             TackyVal::Constant(T::ConstUInt(u)) => Operand::Imm(*u as i64),
@@ -190,6 +215,7 @@ impl CodeGen {
     }
 
     fn tacky_type(&self, tacky_val: &TackyVal) -> Type {
+        // note: this reports the type of ConstChar as Type::SChar, not Type::Char, does not matter for codegen
         match tacky_val {
             TackyVal::Constant(c) => type_of_const(c),
             TackyVal::Var(v) => self.symbol_table.get(v).t.clone(),
@@ -393,6 +419,7 @@ impl CodeGen {
                 let asm_dst = self.convert_val(&dst);
                 vec![Instruction::Mov(t, asm_src, asm_dst)]
             }
+
             TackyInstruction::Return(tacky_val) => {
                 let t = self.asm_type(tacky_val);
                 let asm_val = self.convert_val(&tacky_val);
@@ -403,6 +430,7 @@ impl CodeGen {
                 };
                 vec![Instruction::Mov(t, asm_val, ret_reg), Instruction::Ret]
             }
+
             TackyInstruction::Unary {
                 op: TackyUnaryOp::Not,
                 src,
@@ -443,6 +471,7 @@ impl CodeGen {
                     ]
                 }
             }
+
             TackyInstruction::Unary {
                 op: TackyUnaryOp::Negate,
                 src,
@@ -461,6 +490,7 @@ impl CodeGen {
                     },
                 ]
             }
+
             TackyInstruction::Unary { op, src, dst } => {
                 let t = self.asm_type(src);
                 let asm_op = convert_unop(&op);
@@ -471,6 +501,7 @@ impl CodeGen {
                     Instruction::Unary(asm_op, t, asm_dst),
                 ]
             }
+
             TackyInstruction::Binary {
                 op,
                 src1,
@@ -531,30 +562,35 @@ impl CodeGen {
                         }
                     }
                     // Bitwise shift
-                    TackyBinaryOp::LeftShift => {
-                        if self.tacky_type(src1).is_signed() {
-                            vec![
-                                Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
+                    TackyBinaryOp::BitshiftLeft => {
+                        let is_signed = self.tacky_type(src1).is_signed();
+                        let asm_op = convert_shift_op(is_signed, &op);
+                        let asm_t = self.asm_type(src1);
+
+                        match asm_src2 {
+                            Operand::Imm(_) => vec![
+                                Instruction::Mov(asm_t.clone(), asm_src1, asm_dst.clone()),
                                 Instruction::Binary {
-                                    op: BinaryOperator::Sal,
-                                    t: src_t,
+                                    op: asm_op,
+                                    t: asm_t,
                                     src: asm_src2,
                                     dst: asm_dst,
                                 },
-                            ]
-                        } else {
-                            vec![
-                                Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
+                            ],
+                            _ => vec![
+                                Instruction::Mov(asm_t.clone(), asm_src1, asm_dst.clone()),
+                                // NOTE: only lower 8 bits of CL are used for shift count
+                                Instruction::Mov(AsmType::Byte, asm_src2, Operand::Reg(Reg::CX)),
                                 Instruction::Binary {
-                                    op: BinaryOperator::Shl,
-                                    t: src_t,
-                                    src: asm_src2,
+                                    op: asm_op,
+                                    t: asm_t,
+                                    src: Operand::Reg(Reg::CX),
                                     dst: asm_dst,
                                 },
-                            ]
+                            ],
                         }
                     }
-                    TackyBinaryOp::RightShift => {
+                    TackyBinaryOp::BitshiftRight => {
                         if self.tacky_type(src1).is_signed() {
                             vec![
                                 Instruction::Mov(src_t.clone(), asm_src1, asm_dst.clone()),
@@ -592,6 +628,7 @@ impl CodeGen {
                     }
                 }
             }
+
             TackyInstruction::Load { src_ptr, dst } => {
                 let asm_src_ptr = self.convert_val(src_ptr);
                 let asm_dst = self.convert_val(dst);
@@ -601,6 +638,7 @@ impl CodeGen {
                     Instruction::Mov(t, Operand::Memory(Reg::R9, 0), asm_dst),
                 ]
             }
+
             TackyInstruction::Store { src, dst_ptr } => {
                 let asm_src = self.convert_val(src);
                 let t = self.asm_type(src);
@@ -610,12 +648,15 @@ impl CodeGen {
                     Instruction::Mov(t, asm_src, Operand::Memory(Reg::R9, 0)),
                 ]
             }
+
             TackyInstruction::GetAddress { src, dst } => {
                 let asm_src = self.convert_val(src);
                 let asm_dst = self.convert_val(dst);
                 vec![Instruction::Lea(asm_src, asm_dst)]
             }
+
             TackyInstruction::Jump(target) => vec![Instruction::Jmp(target.to_string())],
+
             TackyInstruction::JumpIfZero(cond, target) => {
                 let t = self.asm_type(cond);
                 let asm_cond = self.convert_val(&cond);
@@ -642,6 +683,7 @@ impl CodeGen {
                     ]
                 }
             }
+
             TackyInstruction::JumpIfNotZero(cond, target) => {
                 let t = self.asm_type(cond);
                 let asm_cond = self.convert_val(&cond);
@@ -664,43 +706,97 @@ impl CodeGen {
                     ]
                 }
             }
+
             TackyInstruction::Label(l) => vec![Instruction::Label(l.to_string())],
+
             TackyInstruction::FunCall { f, args, dst } => {
                 self.convert_function_call(&f, &args, &dst)
             }
+
             TackyInstruction::SignExtend { src, dst } => {
                 let asm_src = self.convert_val(src);
                 let asm_dst = self.convert_val(dst);
-                vec![Instruction::Movsx(asm_src, asm_dst)]
+                vec![Instruction::Movsx {
+                    src_type: self.asm_type(src),
+                    dst_type: self.asm_type(dst),
+                    src: asm_src,
+                    dst: asm_dst,
+                }]
             }
+
             TackyInstruction::Truncate { src, dst } => {
                 let asm_src = self.convert_val(src);
                 let asm_dst = self.convert_val(dst);
-                vec![Instruction::Mov(AsmType::Longword, asm_src, asm_dst)]
+                vec![Instruction::Mov(self.asm_type(dst), asm_src, asm_dst)]
             }
+
             TackyInstruction::ZeroExtend { src, dst } => {
                 let asm_src = self.convert_val(src);
                 let asm_dst = self.convert_val(dst);
-                vec![Instruction::MovZeroExtend(asm_src, asm_dst)]
+                vec![Instruction::MovZeroExtend {
+                    src_type: self.asm_type(src),
+                    dst_type: self.asm_type(dst),
+                    src: asm_src,
+                    dst: asm_dst,
+                }]
             }
+
             TackyInstruction::IntToDouble { src, dst } => {
                 let asm_src = self.convert_val(&src);
                 let asm_dst = self.convert_val(&dst);
                 let t = self.asm_type(&src);
-                vec![Instruction::Cvtsi2sd(t, asm_src, asm_dst)]
+
+                if t == AsmType::Byte {
+                    vec![
+                        Instruction::Movsx {
+                            src_type: AsmType::Byte,
+                            dst_type: AsmType::Longword,
+                            src: asm_src,
+                            dst: Operand::Reg(Reg::R9),
+                        },
+                        Instruction::Cvtsi2sd(AsmType::Longword, Operand::Reg(Reg::R9), asm_dst),
+                    ]
+                } else {
+                    vec![Instruction::Cvtsi2sd(t, asm_src, asm_dst)]
+                }
             }
+
             TackyInstruction::DoubleToInt { src, dst } => {
                 let asm_src = self.convert_val(&src);
                 let asm_dst = self.convert_val(&dst);
                 let t = self.asm_type(&dst);
-                vec![Instruction::Cvttsd2si(t, asm_src, asm_dst)]
+
+                if t == AsmType::Byte {
+                    vec![
+                        Instruction::Cvttsd2si(AsmType::Longword, asm_src, Operand::Reg(Reg::R9)),
+                        Instruction::Mov(AsmType::Byte, Operand::Reg(Reg::R9), asm_dst),
+                    ]
+                } else {
+                    vec![Instruction::Cvttsd2si(t, asm_src, asm_dst)]
+                }
             }
+
             TackyInstruction::UIntToDouble { src, dst } => {
                 let asm_src = self.convert_val(&src);
                 let asm_dst = self.convert_val(&dst);
-                if self.tacky_type(src) == Type::UInt {
+                if self.tacky_type(src) == Type::UChar {
                     vec![
-                        Instruction::MovZeroExtend(asm_src, Operand::Reg(Reg::R9)),
+                        Instruction::MovZeroExtend {
+                            src_type: AsmType::Byte,
+                            dst_type: AsmType::Longword,
+                            src: asm_src,
+                            dst: Operand::Reg(Reg::R9),
+                        },
+                        Instruction::Cvtsi2sd(AsmType::Longword, Operand::Reg(Reg::R9), asm_dst),
+                    ]
+                } else if self.tacky_type(src) == Type::UInt {
+                    vec![
+                        Instruction::MovZeroExtend {
+                            src_type: AsmType::Longword,
+                            dst_type: AsmType::Quadword,
+                            src: asm_src,
+                            dst: Operand::Reg(Reg::R9),
+                        },
                         Instruction::Cvtsi2sd(AsmType::Quadword, Operand::Reg(Reg::R9), asm_dst),
                     ]
                 } else {
@@ -744,10 +840,16 @@ impl CodeGen {
                     ]
                 }
             }
+
             TackyInstruction::DoubleToUInt { src, dst } => {
                 let asm_src = self.convert_val(&src);
                 let asm_dst = self.convert_val(&dst);
-                if self.tacky_type(dst) == Type::UInt {
+                if self.tacky_type(dst) == Type::UChar {
+                    vec![
+                        Instruction::Cvttsd2si(AsmType::Longword, asm_src, Operand::Reg(Reg::R9)),
+                        Instruction::Mov(AsmType::Byte, Operand::Reg(Reg::R9), asm_dst),
+                    ]
+                } else if self.tacky_type(dst) == Type::UInt {
                     vec![
                         Instruction::Cvttsd2si(AsmType::Quadword, asm_src, Operand::Reg(Reg::R9)),
                         Instruction::Mov(AsmType::Longword, Operand::Reg(Reg::R9), asm_dst),
@@ -790,11 +892,13 @@ impl CodeGen {
                     ]
                 }
             }
+
             TackyInstruction::CopyToOffset { src, dst, offset } => vec![Instruction::Mov(
                 self.asm_type(src),
                 self.convert_val(src),
                 Operand::PseudoMem(dst.to_string(), *offset as isize),
             )],
+
             TackyInstruction::AddPtr {
                 ptr,
                 index: TackyVal::Constant(T::ConstLong(c)),
@@ -814,6 +918,7 @@ impl CodeGen {
                     ),
                 ]
             }
+
             TackyInstruction::AddPtr {
                 ptr,
                 index,
@@ -916,6 +1021,7 @@ impl CodeGen {
                     .map(|name| TackyVal::Var(name.to_string()))
                     .collect();
                 let mut instructions = self.pass_params(&params_as_tacky);
+
                 for instruction in body {
                     instructions.extend(self.convert_instruction(instruction));
                 }
@@ -926,6 +1032,7 @@ impl CodeGen {
                     instructions,
                 }
             }
+
             TopLevel::StaticVariable {
                 name,
                 global,
@@ -935,6 +1042,12 @@ impl CodeGen {
                 name: name.to_string(),
                 global: *global,
                 alignment: get_var_alignment(t.clone()) as i8,
+                init: init.clone(),
+            },
+
+            TopLevel::StaticConstant { name, t, init } => AssemblyTopLevel::StaticConstant {
+                name: name.to_string(),
+                alignment: t.get_alignment(),
                 init: init.clone(),
             },
         }
@@ -994,6 +1107,10 @@ fn convert_symbol(assembly_symbols: &mut BackendSymbolTable, entry: &Entry, name
             t: Type::FunType { .. },
             attrs: IdentifierAttrs::FunAttr { defined, .. },
         } => assembly_symbols.add_fun(name, *defined),
+        Entry {
+            t,
+            attrs: IdentifierAttrs::ConstAttr(_),
+        } => assembly_symbols.add_constant(name, &convert_type(t)),
         Entry {
             t,
             attrs: IdentifierAttrs::StaticAttr { .. },

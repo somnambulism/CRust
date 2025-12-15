@@ -71,6 +71,7 @@ pub enum CondCode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AsmType {
+    Byte,
     Longword,
     Quadword,
     Double,
@@ -80,8 +81,18 @@ pub enum AsmType {
 #[derive(Clone, Debug)]
 pub enum Instruction {
     Mov(AsmType, Operand, Operand),
-    Movsx(Operand, Operand),
-    MovZeroExtend(Operand, Operand),
+    Movsx {
+        src_type: AsmType,
+        dst_type: AsmType,
+        src: Operand,
+        dst: Operand,
+    },
+    MovZeroExtend {
+        src_type: AsmType,
+        dst_type: AsmType,
+        src: Operand,
+        dst: Operand,
+    },
     Lea(Operand, Operand),
     Cvttsd2si(AsmType, Operand, Operand),
     Cvtsi2sd(AsmType, Operand, Operand),

@@ -1,8 +1,3 @@
-use std::{
-    collections::HashMap,
-    mem::{Discriminant, discriminant},
-};
-
 use num_traits::ToPrimitive;
 
 use crate::library::{
@@ -183,10 +178,49 @@ fn is_assignment(token: &Token) -> bool {
     )
 }
 
+fn unescape(s: &str) -> Result<String, String> {
+    let mut chars = s.chars().peekable();
+    let mut out = String::new();
+
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+
+        // after backslash
+        let esc = chars.next().ok_or("Dangling backslash")?;
+
+        let decoded = match esc {
+            '\'' => '\'',
+            '"' => '"',
+            '?' => '?',
+            '\\' => '\\',
+            'a' => '\x07',
+            'b' => '\x08',
+            'f' => '\x0C',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            'v' => '\x0B',
+            _ => return Err(format!("Invalid escape: \\{}", esc)),
+        };
+
+        out.push(decoded);
+    }
+
+    Ok(out)
+}
+
 fn is_type_specifier(token: &Token) -> bool {
     matches!(
         token,
-        Token::KWInt | Token::KWLong | Token::KWSigned | Token::KWUnsigned | Token::KWDouble
+        Token::KWInt
+            | Token::KWLong
+            | Token::KWSigned
+            | Token::KWUnsigned
+            | Token::KWDouble
+            | Token::KWChar
     )
 }
 
@@ -205,7 +239,10 @@ fn const_to_dim(c: &Exp) -> i64 {
         Exp::Constant(T::ConstUInt(u)) => i64::from(*u),
         Exp::Constant(T::ConstULong(ul)) => *ul as i64,
         Exp::Constant(T::ConstDouble(_)) => panic!("Array dimensions must have integer type"),
-        _ => panic!("Array dimensions must be a constant"),
+        Exp::Constant(T::ConstChar(_) | T::ConstUChar(_)) => {
+            panic!("Internal error, we're not using char constants for array dimensions")
+        }
+        _ => panic!("Array dimensions must be constant expressions"),
     };
     if i > 0 {
         i
@@ -314,57 +351,52 @@ impl Parser {
     }
 
     // Convert list of specifiers to a type
-    fn parse_type(&mut self, specifier_list: Vec<Token>) -> Result<Type, String> {
-        if specifier_list.len() == 1 && matches!(&specifier_list[0], Token::KWDouble) {
-            return Ok(Type::Double);
-        }
+    fn parse_type(&mut self, mut specifier_list: Vec<Token>) -> Result<Type, String> {
+        specifier_list.sort();
 
-        if specifier_list.is_empty() {
-            return Err("Invalid type specifier".to_string());
-        }
+        match specifier_list.as_slice() {
+            [Token::KWDouble] => return Ok(Type::Double),
+            [Token::KWChar] => return Ok(Type::Char),
+            [Token::KWChar, Token::KWSigned] => return Ok(Type::SChar),
+            [Token::KWChar, Token::KWUnsigned] => return Ok(Type::UChar),
+            _ => {
+                for i in 0..specifier_list.len() - 1 {
+                    if specifier_list[i] == specifier_list[i + 1]
+                        && specifier_list[i] != Token::KWLong
+                    {
+                        return Err(format!("Duplicate type specifier: {:?}", specifier_list[i]));
+                    }
+                }
 
-        let mut counts: HashMap<Discriminant<Token>, usize> = HashMap::new();
-        for tok in specifier_list {
-            let d = discriminant(&tok);
-            *counts.entry(d).or_insert(0) += 1;
-        }
+                let long_count = specifier_list
+                    .iter()
+                    .filter(|t| matches!(t, Token::KWLong))
+                    .count();
+                if long_count > 2 {
+                    return Err(
+                        "Invalid type specifier: 'long' appears more than twice".to_string()
+                    );
+                }
 
-        let double_disc = discriminant(&Token::KWDouble);
-        if counts.get(&double_disc).copied().unwrap_or(0) > 0 {
-            return Err("Invalid type specifier".to_string());
-        }
-
-        let signed_disc = discriminant(&Token::KWSigned);
-        let unsigned_disc = discriminant(&Token::KWUnsigned);
-        let long_disc = discriminant(&Token::KWLong);
-
-        if counts.get(&signed_disc).copied().unwrap_or(0) > 0
-            && counts.get(&unsigned_disc).copied().unwrap_or(0) > 0
-        {
-            return Err("Invalid type specifier".to_string());
-        }
-
-        for (&disc, &cnt) in counts.iter() {
-            if disc == long_disc {
-                if cnt > 2 {
+                if specifier_list.is_empty()
+                    || specifier_list.contains(&Token::KWDouble)
+                    || specifier_list.contains(&Token::KWChar)
+                    || specifier_list.contains(&Token::KWSigned)
+                        && specifier_list.contains(&Token::KWUnsigned)
+                {
                     return Err("Invalid type specifier".to_string());
                 }
-            } else if cnt > 1 {
-                return Err("Invalid type specifier".to_string());
+
+                if specifier_list.contains(&Token::KWUnsigned) && long_count > 0 {
+                    return Ok(Type::ULong);
+                } else if specifier_list.contains(&Token::KWUnsigned) {
+                    return Ok(Type::UInt);
+                } else if long_count > 0 {
+                    return Ok(Type::Long);
+                } else {
+                    return Ok(Type::Int);
+                }
             }
-        }
-
-        let unsigned = counts.get(&unsigned_disc).copied().unwrap_or(0) > 0;
-        let long = counts.get(&long_disc).copied().unwrap_or(0) > 0;
-
-        if unsigned && long {
-            Ok(Type::ULong)
-        } else if unsigned {
-            Ok(Type::UInt)
-        } else if long {
-            Ok(Type::Long)
-        } else {
-            Ok(Type::Int)
         }
     }
 
@@ -400,6 +432,7 @@ impl Parser {
 
     /**
      * <int> ::= ? A constant token ?
+     * <char> ::= ? A char token ?
      * <long> ::= ? An int or long token ?
      * <uint> ::= ? An unsigned int token ?
      * <ulong> ::= ? An unsigned int or unsigned long token ?
@@ -407,6 +440,20 @@ impl Parser {
      */
     fn parse_constant(&mut self) -> Result<Exp, String> {
         match self.tokens.take_token()? {
+            Token::ConstChar(s) => {
+                let unescaped = unescape(&s)?;
+                if unescaped.len() == 1 {
+                    Ok(Exp::Constant(T::ConstInt(
+                        unescaped.bytes().nth(0).unwrap() as i32,
+                    )))
+                } else {
+                    Err(format!(
+                        "Internal error: Character token {} contains multiple characters",
+                        s
+                    ))
+                }
+            }
+
             Token::ConstDouble(d) => Ok(Exp::Constant(T::ConstDouble(d))),
 
             Token::ConstInt(c) => {
@@ -644,12 +691,25 @@ impl Parser {
         }
     }
 
+    fn parse_string_literals(&mut self) -> Result<String, String> {
+        let mut result = String::new();
+
+        while let Token::StringLiteral(s) = self.tokens.peek()? {
+            let unescaped = unescape(s)?;
+            result.push_str(&unescaped);
+            self.tokens.take_token()?;
+        }
+
+        Ok(result)
+    }
+
     // <primary-exp> ::= <const> | <identifier> | <identifier> "(" [ <argument-list ] ")" | "(" <exp> ")"
     fn parse_primary_expression(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
         match next_token {
             // constant
-            Token::ConstInt(_)
+            Token::ConstChar(_)
+            | Token::ConstInt(_)
             | Token::ConstLong(_)
             | Token::ConstUInt(_)
             | Token::ConstULong(_)
@@ -667,6 +727,10 @@ impl Parser {
                 };
 
                 Ok(exp)
+            }
+            Token::StringLiteral(_) => {
+                let string_exp = self.parse_string_literals()?;
+                Ok(Exp::String(string_exp))
             }
             // cast or parenthesized expression
             Token::OpenParen => {

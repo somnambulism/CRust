@@ -74,8 +74,8 @@ fn convert_binop(op: AstBinaryOperator) -> BinaryOperator {
         AstBinaryOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
         AstBinaryOperator::BitwiseOr => BinaryOperator::BitwiseOr,
         AstBinaryOperator::BitwiseXor => BinaryOperator::Xor,
-        AstBinaryOperator::BitshiftLeft => BinaryOperator::LeftShift,
-        AstBinaryOperator::BitshiftRight => BinaryOperator::RightShift,
+        AstBinaryOperator::BitshiftLeft => BinaryOperator::BitshiftLeft,
+        AstBinaryOperator::BitshiftRight => BinaryOperator::BitshiftRight,
         AstBinaryOperator::Equal => BinaryOperator::Equal,
         AstBinaryOperator::NotEqual => BinaryOperator::NotEqual,
         AstBinaryOperator::LessThan => BinaryOperator::LessThan,
@@ -86,6 +86,48 @@ fn convert_binop(op: AstBinaryOperator) -> BinaryOperator {
             panic!("Internal error, cannot convert these directly to TACKY binops");
         }
     }
+}
+
+fn emit_string_init(dst: &str, mut offset: i64, mut s: &[u8]) -> Vec<Instruction> {
+    let mut res = Vec::new();
+
+    while !s.is_empty() {
+        let len = s.len();
+        if len >= 8 {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&s[..8]);
+            let l = i64::from_le_bytes(buf);
+            res.push(Instruction::CopyToOffset {
+                src: TackyVal::Constant(T::ConstLong(l)),
+                dst: dst.to_string(),
+                offset,
+            });
+            s = &s[8..];
+            offset += 8;
+        } else if len >= 4 {
+            let mut buf = [0u8; 4];
+            buf.copy_from_slice(&s[..4]);
+            let i = i32::from_le_bytes(buf);
+            res.push(Instruction::CopyToOffset {
+                src: TackyVal::Constant(T::ConstInt(i)),
+                dst: dst.to_string(),
+                offset,
+            });
+            s = &s[4..];
+            offset += 4;
+        } else {
+            let c = s[0] as i8;
+            res.push(Instruction::CopyToOffset {
+                src: TackyVal::Constant(T::ConstChar(c)),
+                dst: dst.to_string(),
+                offset,
+            });
+            s = &s[1..];
+            offset += 1;
+        }
+    }
+
+    res
 }
 
 // An expression result that may or may not be lvalue converted
@@ -114,6 +156,10 @@ impl TackyGen {
         match e {
             InnerExp::Constant(c) => (vec![], ExpResult::PlainOperand(TackyVal::Constant(c))),
             InnerExp::Var(v) => (vec![], ExpResult::PlainOperand(TackyVal::Var(v))),
+            InnerExp::String(s) => {
+                let str_id = self.symbol_table.add_string(&s);
+                (vec![], ExpResult::PlainOperand(TackyVal::Var(str_id)))
+            }
             InnerExp::Unary(AstUnaryOperator::Incr, v) => {
                 let const_t = if t.is_pointer() {
                     Type::Long
@@ -790,6 +836,18 @@ impl TackyGen {
         initializer: Initializer,
     ) -> Vec<Instruction> {
         match initializer {
+            Initializer::SingleInit(TypedExp {
+                e: InnerExp::String(s),
+                t: Type::Array { size, .. },
+            }) => {
+                let str_bytes = s.as_bytes();
+                let padding_bytes = vec![0u8; size as usize - s.len()];
+                emit_string_init(
+                    name,
+                    offset,
+                    [str_bytes, &padding_bytes].concat().as_slice(),
+                )
+            }
             Initializer::SingleInit(e) => {
                 let (mut eval_init, v) = self.emit_tacky_and_convert(e);
                 eval_init.push(Instruction::CopyToOffset {
@@ -913,6 +971,17 @@ impl TackyGen {
 
     fn emit_var_declaration(&mut self, d: VariableDeclaration<Initializer>) -> Vec<Instruction> {
         match d {
+            VariableDeclaration {
+                name,
+                init:
+                    Some(
+                        string_init @ Initializer::SingleInit(TypedExp {
+                            e: InnerExp::String(_),
+                            t: Type::Array { .. },
+                        }),
+                    ),
+                ..
+            } => self.emit_compound_init(&name, 0, string_init),
             VariableDeclaration {
                 name,
                 init: Some(Initializer::SingleInit(e)),
@@ -1106,7 +1175,10 @@ impl TackyGen {
         for_init_instructions
     }
 
-    fn emit_fun_declaration(&mut self, fun_decl: Declaration<Initializer, TypedExp>) -> Option<TopLevel> {
+    fn emit_fun_declaration(
+        &mut self,
+        fun_decl: Declaration<Initializer, TypedExp>,
+    ) -> Option<TopLevel> {
         match fun_decl {
             Declaration::FunDecl(AstFunction {
                 name,
@@ -1153,6 +1225,11 @@ impl TackyGen {
                     }),
                     InitialValue::NoInitializer => None,
                 },
+                IdentifierAttrs::ConstAttr(init) => Some(TopLevel::StaticConstant {
+                    name: name.clone(),
+                    t: entry.t.clone(),
+                    init: init.clone(),
+                }),
                 _ => None,
             })
             .collect()

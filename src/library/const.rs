@@ -2,6 +2,8 @@ use super::types::Type;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum T {
+    ConstChar(i8),
+    ConstUChar(u8),
     ConstInt(i32),
     ConstLong(i64),
     ConstUInt(u32),
@@ -14,6 +16,8 @@ pub const INT_ONE: T = T::ConstInt(1);
 
 pub fn type_of_const(c: &T) -> Type {
     match c {
+        T::ConstChar(_) => Type::SChar,
+        T::ConstUChar(_) => Type::UChar,
         T::ConstInt(_) => Type::Int,
         T::ConstLong(_) => Type::Long,
         T::ConstUInt(_) => Type::UInt,

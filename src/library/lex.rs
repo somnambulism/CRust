@@ -40,28 +40,28 @@ impl Lexer {
             TokenDef {
                 re: Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*\b").unwrap(),
                 group: 0,
-                converter: Lexer::convert_identifier,
+                converter: convert_identifier,
             },
             // constants
             TokenDef {
                 re: Regex::new(r"^([0-9]+)[^\w.]").unwrap(),
                 group: 1,
-                converter: Lexer::convert_int,
+                converter: convert_int,
             },
             TokenDef {
                 re: Regex::new(r"^([0-9]+[lL])[^\w.]").unwrap(),
                 group: 1,
-                converter: Lexer::convert_long,
+                converter: convert_long,
             },
             TokenDef {
                 re: Regex::new(r"^([0-9]+[uU])[^\w.]").unwrap(),
                 group: 1,
-                converter: Lexer::convert_uint,
+                converter: convert_uint,
             },
             TokenDef {
                 re: Regex::new(r"^([0-9]+([lL][uU]|[uU][lL]))[^\w.]").unwrap(),
                 group: 1,
-                converter: Lexer::convert_ulong,
+                converter: convert_ulong,
             },
             TokenDef {
                 re: Regex::new(
@@ -69,7 +69,18 @@ impl Lexer {
                 )
                 .unwrap(),
                 group: 1,
-                converter: Lexer::convert_double,
+                converter: convert_double,
+            },
+            TokenDef {
+                re: Regex::new(r#"^'([^'\\\n]|\\['"?\\abfnrtv])'"#).unwrap(),
+                group: 0,
+                converter: convert_char,
+            },
+            // string literals
+            TokenDef {
+                re: Regex::new(r#"^"([^"\\\n]|\\['"\\?abfnrtv])*""#).unwrap(),
+                group: 0,
+                converter: convert_string,
             },
             // punctuation
             TokenDef {
@@ -327,58 +338,71 @@ impl Lexer {
         }
         None
     }
+}
 
-    fn convert_identifier(s: &str) -> Token {
-        match s {
-            "int" => Token::KWInt,
-            "return" => Token::KWReturn,
-            "void" => Token::KWVoid,
-            "if" => Token::KWIf,
-            "else" => Token::KWElse,
-            "do" => Token::KWDo,
-            "while" => Token::KWWhile,
-            "for" => Token::KWFor,
-            "break" => Token::KWBreak,
-            "continue" => Token::KWContinue,
-            "static" => Token::KWStatic,
-            "extern" => Token::KWExtern,
-            "long" => Token::KWLong,
-            "unsigned" => Token::KWUnsigned,
-            "signed" => Token::KWSigned,
-            "double" => Token::KWDouble,
-            "goto" => Token::KWGoto,
-            "switch" => Token::KWSwitch,
-            "case" => Token::KWCase,
-            "default" => Token::KWDefault,
-            _ => Token::Identifier(s.to_string()),
-        }
+fn convert_identifier(s: &str) -> Token {
+    match s {
+        "int" => Token::KWInt,
+        "return" => Token::KWReturn,
+        "void" => Token::KWVoid,
+        "if" => Token::KWIf,
+        "else" => Token::KWElse,
+        "do" => Token::KWDo,
+        "while" => Token::KWWhile,
+        "for" => Token::KWFor,
+        "break" => Token::KWBreak,
+        "continue" => Token::KWContinue,
+        "static" => Token::KWStatic,
+        "extern" => Token::KWExtern,
+        "long" => Token::KWLong,
+        "unsigned" => Token::KWUnsigned,
+        "signed" => Token::KWSigned,
+        "double" => Token::KWDouble,
+        "char" => Token::KWChar,
+        "goto" => Token::KWGoto,
+        "switch" => Token::KWSwitch,
+        "case" => Token::KWCase,
+        "default" => Token::KWDefault,
+        _ => Token::Identifier(s.to_string()),
     }
+}
 
-    fn convert_int(s: &str) -> Token {
-        Token::ConstInt(BigInt::from_str(s).unwrap())
-    }
+fn convert_int(s: &str) -> Token {
+    Token::ConstInt(BigInt::from_str(s).unwrap())
+}
 
-    fn convert_long(s: &str) -> Token {
-        // drop "l" suffix
-        let const_str = string_util::chop_suffix(s, 1);
-        Token::ConstLong(BigInt::from_str(const_str).unwrap())
-    }
+fn convert_long(s: &str) -> Token {
+    // drop "l" suffix
+    let const_str = string_util::chop_suffix(s, 1);
+    Token::ConstLong(BigInt::from_str(const_str).unwrap())
+}
 
-    fn convert_uint(s: &str) -> Token {
-        // drop "u" suffix
-        let const_str = string_util::chop_suffix(s, 1);
-        Token::ConstUInt(BigInt::from_str(const_str).unwrap())
-    }
+fn convert_uint(s: &str) -> Token {
+    // drop "u" suffix
+    let const_str = string_util::chop_suffix(s, 1);
+    Token::ConstUInt(BigInt::from_str(const_str).unwrap())
+}
 
-    fn convert_ulong(s: &str) -> Token {
-        // remove ul/lu suffix
-        let const_str = string_util::chop_suffix(s, 2);
-        Token::ConstULong(BigInt::from_str(const_str).unwrap())
-    }
+fn convert_ulong(s: &str) -> Token {
+    // remove ul/lu suffix
+    let const_str = string_util::chop_suffix(s, 2);
+    Token::ConstULong(BigInt::from_str(const_str).unwrap())
+}
 
-    fn convert_double(s: &str) -> Token {
-        Token::ConstDouble(f64::from_str(s).unwrap())
-    }
+fn convert_double(s: &str) -> Token {
+    Token::ConstDouble(f64::from_str(s).unwrap())
+}
+
+fn convert_char(s: &str) -> Token {
+    // remove open and close quotes from matched input
+    let ch = &s[1..s.len() - 1];
+    Token::ConstChar(ch.to_string())
+}
+
+fn convert_string(s: &str) -> Token {
+    // remove open and close quotes from matched input
+    let str = &s[1..s.len() - 1];
+    Token::StringLiteral(str.to_string())
 }
 
 fn count_leading_ws(s: &str) -> Option<usize> {

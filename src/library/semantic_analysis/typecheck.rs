@@ -22,7 +22,10 @@ use crate::library::{
 fn is_lvalue(t: &TypedExp) -> bool {
     matches!(
         &t.e,
-        InnerExp::Dereference(_) | InnerExp::Subscript { .. } | InnerExp::Var(_)
+        InnerExp::Dereference(_)
+            | InnerExp::Subscript { .. }
+            | InnerExp::Var(_)
+            | InnerExp::String(_)
     )
 }
 
@@ -35,6 +38,9 @@ fn convert_to(e: TypedExp, target_type: Type) -> TypedExp {
 }
 
 fn get_common_type(t1: &Type, t2: &Type) -> Type {
+    let t1 = if t1.is_character() { &Type::Int } else { t1 };
+    let t2 = if t2.is_character() { &Type::Int } else { t2 };
+
     if t1 == t2 {
         t1.clone()
     } else if t1 == &Type::Double || t2 == &Type::Double {
@@ -97,66 +103,6 @@ fn convert_by_assignment(e: TypedExp, target_type: Type) -> TypedExp {
     }
 }
 
-fn static_init_helper(var_type: &Type, init: &Initializer) -> Vec<StaticInit> {
-    match (var_type, init) {
-        (Type::Array { .. }, Initializer::SingleInit(_)) => panic!(
-            "Can't initialize array {:?} from scalar value {:?}",
-            var_type, init
-        ),
-        (_, Initializer::SingleInit(Exp::Constant(c))) if is_zero_int(c) => {
-            vec![zero(var_type)]
-        }
-        (Type::Pointer(_), _) => panic!(
-            "Invalid static initializer {:?} for poiner {:?}",
-            init, var_type
-        ),
-        (_, Initializer::SingleInit(Exp::Constant(c))) => {
-            let init_val = match const_convert(var_type, &c) {
-                T::ConstInt(i) => StaticInit::IntInit(i),
-                T::ConstLong(l) => StaticInit::LongInit(l),
-                T::ConstUInt(u) => StaticInit::UIntInit(u),
-                T::ConstULong(ul) => StaticInit::ULongInit(ul),
-                T::ConstDouble(d) => StaticInit::DoubleInit(d),
-            };
-            vec![init_val]
-        }
-        (Type::Array { elem_type, size }, Initializer::CompoundInit(inits)) => {
-            let mut static_inits: Vec<StaticInit> = inits
-                .iter()
-                .flat_map(|init| static_init_helper(elem_type, init))
-                .collect();
-
-            let padding = match size - inits.len() as i64 {
-                0 => vec![],
-                n if n > 0 => {
-                    let zero_bytes = elem_type.get_size() * n;
-                    vec![StaticInit::ZeroInit(zero_bytes)]
-                }
-                _ => {
-                    panic!("Too many values in static initializer")
-                }
-            };
-
-            static_inits.extend(padding);
-            static_inits
-        }
-        (_, Initializer::CompoundInit(_)) => {
-            panic!("Can't use compound initializer for object with scalar type");
-        }
-        (_, _) => {
-            panic!(
-                "Internal error: static_init_helper called on ({:?}, {:?})",
-                var_type, init
-            )
-        }
-    }
-}
-
-fn to_static_init(var_type: &Type, init: &Initializer) -> InitialValue {
-    let init_list = static_init_helper(var_type, init);
-    InitialValue::Initial(init_list)
-}
-
 fn make_zero_init(t: &Type) -> TypedInitializer {
     let scalar = |c: T| {
         TypedInitializer::SingleInit(TypedExp {
@@ -170,7 +116,9 @@ fn make_zero_init(t: &Type) -> TypedInitializer {
             t.clone(),
             vec![Box::new(make_zero_init(elem_type)); *size as usize],
         ),
+        Type::Char | Type::SChar => scalar(T::ConstChar(0)),
         Type::Int => scalar(T::ConstInt(0)),
+        Type::UChar => scalar(T::ConstUChar(0)),
         Type::UInt => scalar(T::ConstUInt(0)),
         Type::Long => scalar(T::ConstLong(0)),
         Type::ULong | Type::Pointer(_) => scalar(T::ConstULong(0)),
@@ -179,6 +127,20 @@ fn make_zero_init(t: &Type) -> TypedInitializer {
             panic!("Internal error: can't create zero initializer with function type")
         }
     }
+}
+
+fn typecheck_const(c: &T) -> TypedExp {
+    let e = InnerExp::Constant(c.clone());
+    TypedExp::set_type(e, type_of_const(c))
+}
+
+fn typecheck_string(s: &str) -> TypedExp {
+    let e = InnerExp::String(s.to_string());
+    let t = Type::Array {
+        elem_type: Box::new(Type::Char),
+        size: s.len() as i64 + 1,
+    };
+    TypedExp::set_type(e, t)
 }
 
 pub struct TypeChecker {
@@ -203,15 +165,11 @@ impl TypeChecker {
         }
     }
 
-    fn typecheck_const(&self, c: &T) -> TypedExp {
-        let e = InnerExp::Constant(c.clone());
-        TypedExp::set_type(e, type_of_const(c))
-    }
-
     fn typecheck_exp(&self, exp: &Exp) -> TypedExp {
         match exp {
             Exp::Var(v) => self.typecheck_var(v),
-            Exp::Constant(c) => self.typecheck_const(c),
+            Exp::Constant(c) => typecheck_const(c),
+            Exp::String(s) => typecheck_string(s),
             Exp::Cast {
                 target_type,
                 e: inner,
@@ -290,6 +248,13 @@ impl TypeChecker {
         if typed_inner.t == Type::Double || typed_inner.t.is_pointer() {
             panic!("Bitwise complement only valid for integer types");
         } else {
+            // promote character types to int
+            let typed_inner = if typed_inner.t.is_character() {
+                convert_to(typed_inner, Type::Int)
+            } else {
+                typed_inner
+            };
+
             let complement_exp =
                 InnerExp::Unary(UnaryOperator::Complement, typed_inner.clone().into());
             TypedExp::set_type(complement_exp, typed_inner.t)
@@ -302,6 +267,13 @@ impl TypeChecker {
         if let Type::Pointer(_) = typed_inner.t {
             panic!("Can't negate a pointer {:?}", inner);
         } else {
+            // promote character types to int
+            let typed_inner = if typed_inner.t.is_character() {
+                convert_to(typed_inner, Type::Int)
+            } else {
+                typed_inner
+            };
+
             let negate_exp = InnerExp::Unary(UnaryOperator::Negate, typed_inner.clone().into());
             TypedExp::set_type(negate_exp, typed_inner.t)
         }
@@ -463,6 +435,19 @@ impl TypeChecker {
         let typed_e1 = self.typecheck_exp(e1);
         let typed_e2 = self.typecheck_exp(e2);
 
+        // promote both operands from character types to int
+        let typed_e1 = if typed_e1.t.is_character() {
+            convert_to(typed_e1, Type::Int)
+        } else {
+            typed_e1
+        };
+
+        let typed_e2 = if typed_e2.t.is_character() {
+            convert_to(typed_e2, Type::Int)
+        } else {
+            typed_e2
+        };
+
         if !(typed_e1.get_type().is_integer() && typed_e2.get_type().is_integer()) {
             panic!("Both operands of bit shift operation must be integers");
         } else {
@@ -562,9 +547,21 @@ impl TypeChecker {
             }
 
             let (result_t, converted_rhs) =
-                // Don't perform any type conversion for >>= and <<=
+                // Apply integer type promotions for bitshift operations, but don't convert to common type
                 if op == &BinaryOperator::BitshiftLeft || op == &BinaryOperator::BitshiftRight {
-                    (lhs_type.clone(), typed_rhs)
+                    let lhs_type = if lhs_type.is_character() {
+                        Type::Int
+                    } else {
+                        lhs_type.clone()
+                    };
+
+                    let converted_rhs = if typed_rhs.t.is_character() {
+                        convert_to(typed_rhs, Type::Int)
+                    } else {
+                        typed_rhs
+                    };
+
+                    (lhs_type.clone(), converted_rhs)
                 // For += and -= with pointers, convert RHS to Long and leave LHS type as result type
                 } else if lhs_type.is_pointer() {
                     (lhs_type.clone(), convert_to(typed_rhs, Type::Long))
@@ -712,8 +709,113 @@ impl TypeChecker {
         }
     }
 
+    fn static_init_helper(&mut self, var_type: &Type, init: &Initializer) -> Vec<StaticInit> {
+        match (var_type, init) {
+            (Type::Array { elem_type, size }, Initializer::SingleInit(Exp::String(s))) => {
+                if elem_type.is_character() {
+                    match size - s.len() as i64 {
+                        0 => vec![StaticInit::StringInit(s.clone(), false)],
+                        1 => vec![StaticInit::StringInit(s.clone(), true)],
+                        n if n > 0 => vec![
+                            StaticInit::StringInit(s.clone(), true),
+                            StaticInit::ZeroInit(n - 1),
+                        ],
+                        _ => {
+                            panic!("String is too long to fit in array of size {}", size)
+                        }
+                    }
+                } else {
+                    panic!(
+                        "Can't initialize array of type {:?} from string {:?}",
+                        var_type, s
+                    )
+                }
+            }
+            (Type::Array { .. }, Initializer::SingleInit(_)) => panic!(
+                "Can't initialize array {:?} from scalar value {:?}",
+                var_type, init
+            ),
+            (Type::Pointer(t), Initializer::SingleInit(Exp::String(s))) if **t == Type::Char => {
+                let str_id = self.symbol_table.add_string(s);
+                vec![StaticInit::PointerInit(str_id)]
+            }
+            (_, Initializer::SingleInit(Exp::String(_))) => panic!(
+                "Can't initialize variable of type {:?} from string initializer {:?}",
+                var_type, init
+            ),
+            (_, Initializer::SingleInit(Exp::Constant(c))) if is_zero_int(c) => {
+                vec![zero(var_type)]
+            }
+            (Type::Pointer(_), _) => panic!(
+                "Invalid static initializer {:?} for poiner {:?}",
+                init, var_type
+            ),
+            (_, Initializer::SingleInit(Exp::Constant(c))) => {
+                let init_val = match const_convert(var_type, &c) {
+                    T::ConstChar(c) => StaticInit::CharInit(c),
+                    T::ConstInt(i) => StaticInit::IntInit(i),
+                    T::ConstLong(l) => StaticInit::LongInit(l),
+                    T::ConstUChar(uc) => StaticInit::UCharInit(uc),
+                    T::ConstUInt(u) => StaticInit::UIntInit(u),
+                    T::ConstULong(ul) => StaticInit::ULongInit(ul),
+                    T::ConstDouble(d) => StaticInit::DoubleInit(d),
+                };
+                vec![init_val]
+            }
+            (Type::Array { elem_type, size }, Initializer::CompoundInit(inits)) => {
+                let mut static_inits: Vec<StaticInit> = inits
+                    .iter()
+                    .flat_map(|init| self.static_init_helper(elem_type, init))
+                    .collect();
+
+                let padding = match size - inits.len() as i64 {
+                    0 => vec![],
+                    n if n > 0 => {
+                        let zero_bytes = elem_type.get_size() * n;
+                        vec![StaticInit::ZeroInit(zero_bytes)]
+                    }
+                    _ => {
+                        panic!("Too many values in static initializer")
+                    }
+                };
+
+                static_inits.extend(padding);
+                static_inits
+            }
+            (_, Initializer::CompoundInit(_)) => {
+                panic!("Can't use compound initializer for object with scalar type");
+            }
+            (_, _) => {
+                panic!(
+                    "Internal error: static_init_helper called on ({:?}, {:?})",
+                    var_type, init
+                )
+            }
+        }
+    }
+
+    fn to_static_init(&mut self, var_type: &Type, init: &Initializer) -> InitialValue {
+        let init_list = self.static_init_helper(var_type, init);
+        InitialValue::Initial(init_list)
+    }
+
     fn typecheck_init(&self, target_type: &Type, init: &Initializer) -> TypedInitializer {
         match (target_type, init) {
+            (Type::Array { elem_type, size }, Initializer::SingleInit(Exp::String(s))) => {
+                if !elem_type.is_character() {
+                    panic!(
+                        "Can't initialize array of type {:?} from string {:?}",
+                        target_type, s
+                    )
+                } else if s.len() as i64 > *size {
+                    panic!("String is too long to fit in array of size {}", size)
+                } else {
+                    TypedInitializer::SingleInit(TypedExp::set_type(
+                        InnerExp::String(s.to_string()),
+                        target_type.clone(),
+                    ))
+                }
+            }
             (_, Initializer::SingleInit(e)) => {
                 let typechecked_e = self.typecheck_and_convert(e);
                 let cast_exp = convert_by_assignment(typechecked_e, target_type.clone());
@@ -811,6 +913,14 @@ impl TypeChecker {
                 id,
             } => {
                 let typed_control = self.typecheck_and_convert(control);
+
+                // Perform integer type promotions on switch control expression
+                let typed_control = if typed_control.t.is_character() {
+                    convert_to(typed_control, Type::Int)
+                } else {
+                    typed_control
+                };
+
                 if !typed_control.get_type().is_integer() {
                     panic!("Switch control expression must have integer type");
                 } else {
@@ -929,7 +1039,7 @@ impl TypeChecker {
             Some(StorageClass::Static) => {
                 let zero_init = InitialValue::Initial(vec![zero(var_type)]);
                 let static_init = match init {
-                    Some(i) => to_static_init(var_type, i),
+                    Some(i) => self.to_static_init(var_type, i),
                     None => zero_init.clone(),
                 };
                 self.symbol_table
@@ -1073,7 +1183,7 @@ impl TypeChecker {
             InitialValue::Tentative
         };
         let static_init = match init {
-            Some(i) => to_static_init(var_type, i),
+            Some(i) => self.to_static_init(var_type, i),
             None => default_init,
         };
 

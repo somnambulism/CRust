@@ -46,6 +46,7 @@ pub mod untyped_exp {
     pub enum Exp {
         Constant(T),
         Var(String),
+        String(String),
         Cast {
             target_type: Type,
             e: Box<Exp>,
@@ -88,7 +89,8 @@ pub mod untyped_exp {
 pub mod typed_exp {
     use crate::library::{
         ast::{
-            ExpTrait, InitTrait, ops::{BinaryOperator, UnaryOperator}
+            ExpTrait, InitTrait,
+            ops::{BinaryOperator, UnaryOperator},
         },
         r#const::T,
         types::Type,
@@ -98,6 +100,7 @@ pub mod typed_exp {
     pub enum InnerExp {
         Constant(T),
         Var(String),
+        String(String),
         Cast {
             target_type: Type,
             e: Box<TypedExp>,
