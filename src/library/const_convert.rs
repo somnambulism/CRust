@@ -36,8 +36,8 @@ fn const_of_int64(v: i64, target_type: &Type) -> T {
         Type::UInt => T::ConstUInt(v as u32),
         Type::ULong | Type::Pointer(_) => T::ConstULong(v as u64),
         Type::Double => T::ConstDouble(v as f64),
-        Type::FunType { .. } | Type::Array { .. } => panic!(
-            "Internal error: can't convert constant to non-scalae type {:?}",
+        Type::FunType { .. } | Type::Array { .. } | Type::Void => panic!(
+            "Internal error: can't convert constant to non-scalar {:?}",
             target_type
         ),
     }

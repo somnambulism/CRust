@@ -51,7 +51,9 @@ fn convert_type(t: &Type) -> AsmType {
             size: t.get_size() as usize,
             alignment: t.get_alignment() as usize,
         },
-        Type::FunType { .. } => panic!("Internal error, converting function type to assembly"),
+        Type::FunType { .. } | Type::Void => {
+            panic!("Internal error, converting type {:?} to assembly", t)
+        }
     }
 }
 
@@ -311,7 +313,7 @@ impl CodeGen {
         &mut self,
         f: &str,
         args: &Vec<TackyVal>,
-        dst: &TackyVal,
+        dst: &Option<TackyVal>,
     ) -> Vec<Instruction> {
         let args = self.classify_parameters(args);
 
@@ -396,17 +398,18 @@ impl CodeGen {
         });
 
         // retrieve return value
-        let assembly_dst = self.convert_val(&dst);
-        let return_reg = if self.asm_type(dst) == AsmType::Double {
-            Operand::Reg(Reg::XMM0)
-        } else {
-            Operand::Reg(Reg::AX)
+        match dst {
+            Some(d) => {
+                let assembly_dst = self.convert_val(&d);
+                let return_reg = if self.asm_type(d) == AsmType::Double {
+                    Operand::Reg(Reg::XMM0)
+                } else {
+                    Operand::Reg(Reg::AX)
+                };
+                instructions.push(Instruction::Mov(self.asm_type(d), return_reg, assembly_dst));
+            }
+            None => (),
         };
-        instructions.push(Instruction::Mov(
-            self.asm_type(dst),
-            return_reg,
-            assembly_dst,
-        ));
 
         instructions
     }
@@ -420,7 +423,7 @@ impl CodeGen {
                 vec![Instruction::Mov(t, asm_src, asm_dst)]
             }
 
-            TackyInstruction::Return(tacky_val) => {
+            TackyInstruction::Return(Some(tacky_val)) => {
                 let t = self.asm_type(tacky_val);
                 let asm_val = self.convert_val(&tacky_val);
                 let ret_reg = if t == AsmType::Double {
@@ -430,6 +433,8 @@ impl CodeGen {
                 };
                 vec![Instruction::Mov(t, asm_val, ret_reg), Instruction::Ret]
             }
+
+            TackyInstruction::Return(None) => vec![Instruction::Ret],
 
             TackyInstruction::Unary {
                 op: TackyUnaryOp::Not,

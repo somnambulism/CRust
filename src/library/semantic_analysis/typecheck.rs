@@ -29,6 +29,40 @@ fn is_lvalue(t: &TypedExp) -> bool {
     )
 }
 
+fn validate_type(t: &Type) {
+    match t {
+        Type::Array { elem_type, .. } => {
+            if elem_type.is_complete() {
+                validate_type(elem_type)
+            } else {
+                panic!("Array of incomplete type");
+            }
+        }
+
+        Type::Pointer(t) => validate_type(t),
+
+        Type::FunType {
+            param_types,
+            ret_type,
+        } => {
+            for param_type in param_types {
+                validate_type(param_type);
+            }
+            validate_type(ret_type);
+        }
+
+        Type::Char
+        | Type::SChar
+        | Type::UChar
+        | Type::Int
+        | Type::Long
+        | Type::UInt
+        | Type::ULong
+        | Type::Double
+        | Type::Void => (),
+    }
+}
+
 fn convert_to(e: TypedExp, target_type: Type) -> TypedExp {
     let cast = InnerExp::Cast {
         target_type: target_type.clone(),
@@ -83,6 +117,12 @@ fn get_common_pointer_type(e1: &TypedExp, e2: &TypedExp) -> Type {
         e2.t.clone()
     } else if is_null_pointer_constant(&e2.e) {
         e1.t.clone()
+    } else if (matches!(&e1.t, Type::Pointer(inner) if matches!(**inner, Type::Void))
+        && e2.t.is_pointer())
+        || (matches!(&e2.t, Type::Pointer(inner) if matches!(**inner, Type::Void))
+            && e1.t.is_pointer())
+    {
+        return Type::Pointer(Box::new(Type::Void));
     } else {
         panic!("Expressions have incompatible types: {:?}, {:?}", e1, e2)
     }
@@ -94,6 +134,10 @@ fn convert_by_assignment(e: TypedExp, target_type: Type) -> TypedExp {
     } else if e.t.is_arithmetic() && target_type.is_arithmetic() {
         convert_to(e, target_type)
     } else if is_null_pointer_constant(&e.e) && target_type.is_pointer() {
+        convert_to(e, target_type)
+    } else if (target_type == Type::Pointer(Box::new(Type::Void)) && e.t.is_pointer())
+        || (target_type.is_pointer() && e.t == Type::Pointer(Box::new(Type::Void)))
+    {
         convert_to(e, target_type)
     } else {
         panic!(
@@ -123,8 +167,11 @@ fn make_zero_init(t: &Type) -> TypedInitializer {
         Type::Long => scalar(T::ConstLong(0)),
         Type::ULong | Type::Pointer(_) => scalar(T::ConstULong(0)),
         Type::Double => scalar(T::ConstDouble(0.0)),
-        Type::FunType { .. } => {
-            panic!("Internal error: can't create zero initializer with function type")
+        Type::FunType { .. } | Type::Void => {
+            panic!(
+                "Internal error: can't create zero initializer with type {:?}",
+                t
+            )
         }
     }
 }
@@ -212,20 +259,32 @@ impl TypeChecker {
             Exp::Dereference(inner) => self.typecheck_dereference(inner),
             Exp::AddrOf(inner) => self.typecheck_addr_of(inner),
             Exp::Subscript { ptr, index } => self.typecheck_subscript(ptr, index),
+            Exp::SizeOfT(t) => self.typecheck_size_of_t(t),
+            Exp::SizeOf(e) => self.typecheck_size_of(e),
         }
     }
 
     fn typecheck_cast(&self, target_type: &Type, inner: &Exp) -> TypedExp {
-        if let Type::Array { .. } = target_type {
-            panic!("Cannot cast to array type")
-        } else {
-            let typed_inner = self.typecheck_and_convert(inner);
+        validate_type(target_type);
+        let typed_inner = self.typecheck_and_convert(inner);
 
-            match (target_type, typed_inner.t) {
-                (Type::Double, Type::Pointer(_)) | (Type::Pointer(_), Type::Double) => {
-                    panic!("Cannot cast between pointer and double")
-                }
-                _ => {
+        match (target_type, &typed_inner.t) {
+            (Type::Double, Type::Pointer(_)) | (Type::Pointer(_), Type::Double) => {
+                panic!("Cannot cast between pointer and double")
+            }
+            (Type::Void, _) => {
+                let cast_exp = InnerExp::Cast {
+                    target_type: Type::Void,
+                    e: Box::new(typed_inner),
+                };
+                TypedExp::set_type(cast_exp, Type::Void)
+            }
+            _ => {
+                if !target_type.is_scalar() {
+                    panic!("Can only cast to scalar types or void");
+                } else if !typed_inner.t.is_scalar() {
+                    panic!("Can only cast scalar expressions to non-void type");
+                } else {
                     let cast_exp = InnerExp::Cast {
                         target_type: target_type.clone(),
                         e: self.typecheck_and_convert(inner).into(),
@@ -236,8 +295,18 @@ impl TypeChecker {
         }
     }
 
+    // convenience function to typecheck an expression and validate that it's scalar
+    fn typecheck_scalar(&self, e: &Exp) -> TypedExp {
+        let typed_e = self.typecheck_and_convert(e);
+        if typed_e.t.is_scalar() {
+            typed_e
+        } else {
+            panic!("A scalar operand is required");
+        }
+    }
+
     fn typecheck_not(&self, inner: &Exp) -> TypedExp {
-        let typed_inner = self.typecheck_and_convert(inner);
+        let typed_inner = self.typecheck_scalar(inner);
         let not_exp = InnerExp::Unary(UnaryOperator::Not, typed_inner.into());
         TypedExp::set_type(not_exp, Type::Int)
     }
@@ -245,7 +314,7 @@ impl TypeChecker {
     fn typecheck_complement(&self, inner: &Exp) -> TypedExp {
         let typed_inner = self.typecheck_and_convert(inner);
 
-        if typed_inner.t == Type::Double || typed_inner.t.is_pointer() {
+        if !typed_inner.t.is_integer() {
             panic!("Bitwise complement only valid for integer types");
         } else {
             // promote character types to int
@@ -264,9 +333,7 @@ impl TypeChecker {
     fn typecheck_negate(&self, inner: &Exp) -> TypedExp {
         let typed_inner = self.typecheck_and_convert(inner);
 
-        if let Type::Pointer(_) = typed_inner.t {
-            panic!("Can't negate a pointer {:?}", inner);
-        } else {
+        if typed_inner.t.is_arithmetic() {
             // promote character types to int
             let typed_inner = if typed_inner.t.is_character() {
                 convert_to(typed_inner, Type::Int)
@@ -276,47 +343,51 @@ impl TypeChecker {
 
             let negate_exp = InnerExp::Unary(UnaryOperator::Negate, typed_inner.clone().into());
             TypedExp::set_type(negate_exp, typed_inner.t)
+        } else {
+            panic!("Can't only negate arithmetic types");
         }
     }
 
     fn typecheck_incr(&self, op: &UnaryOperator, inner: &Exp) -> TypedExp {
         let typed_inner = self.typecheck_and_convert(inner);
 
-        if is_lvalue(&typed_inner) {
+        if is_lvalue(&typed_inner)
+            && (typed_inner.t.is_arithmetic() || typed_inner.t.is_complete_pointer())
+        {
             let typed_exp = InnerExp::Unary(op.clone(), typed_inner.clone().into());
             TypedExp::set_type(typed_exp, typed_inner.t)
         } else {
-            panic!("Operand of ++/-- must be an lvalue");
+            panic!("Operand of ++/-- must be an lvalue with arithmetic or pointer type");
         }
     }
 
     fn typecheck_postfix_decr(&self, e: &Exp) -> TypedExp {
         let typed_e = self.typecheck_and_convert(e);
 
-        if is_lvalue(&typed_e) {
+        if is_lvalue(&typed_e) && (typed_e.t.is_arithmetic() || typed_e.t.is_complete_pointer()) {
             // Result has same value as e; no conversions required.
             let result_type = typed_e.get_type();
             TypedExp::set_type(InnerExp::PostfixDecr(typed_e.into()), result_type)
         } else {
-            panic!("Operand of postfix -- must be an lvalue");
+            panic!("Operand of postfix -- must be an lvalue with arithmetic or pointer type");
         }
     }
 
     fn typecheck_postfix_incr(&self, e: &Exp) -> TypedExp {
         let typed_e = self.typecheck_and_convert(e);
 
-        if is_lvalue(&typed_e) {
+        if is_lvalue(&typed_e) && (typed_e.t.is_arithmetic() || typed_e.t.is_complete_pointer()) {
             // Result has same value as e; no conversions required.
             let result_type = typed_e.get_type();
             TypedExp::set_type(InnerExp::PostfixIncr(typed_e.into()), result_type)
         } else {
-            panic!("Operand of postfix ++ must be an lvalue");
+            panic!("Operand of postfix ++ must be an lvalue with arithmetic or pointer type");
         }
     }
 
     fn typecheck_logical(&self, op: &BinaryOperator, e1: &Exp, e2: &Exp) -> TypedExp {
-        let typed_e1 = self.typecheck_and_convert(e1);
-        let typed_e2 = self.typecheck_and_convert(e2);
+        let typed_e1 = self.typecheck_scalar(e1);
+        let typed_e2 = self.typecheck_scalar(e2);
         let typed_binexp = InnerExp::Binary(op.clone(), typed_e1.clone().into(), typed_e2.into());
         TypedExp::set_type(typed_binexp, Type::Int)
     }
@@ -335,7 +406,7 @@ impl TypeChecker {
                 converted_e2.clone().into(),
             );
             TypedExp::set_type(add_exp, common_type)
-        } else if typed_e1.t.is_pointer() && typed_e2.t.is_integer() {
+        } else if typed_e1.t.is_complete_pointer() && typed_e2.t.is_integer() {
             let converted_e2 = convert_to(typed_e2, Type::Long);
             let add_exp = InnerExp::Binary(
                 BinaryOperator::Add,
@@ -343,7 +414,7 @@ impl TypeChecker {
                 converted_e2.clone().into(),
             );
             TypedExp::set_type(add_exp, typed_e1.t)
-        } else if typed_e2.t.is_pointer() && typed_e1.t.is_integer() {
+        } else if typed_e2.t.is_complete_pointer() && typed_e1.t.is_integer() {
             let converted_e1 = convert_to(typed_e1, Type::Long);
             let add_exp = InnerExp::Binary(
                 BinaryOperator::Add,
@@ -370,7 +441,7 @@ impl TypeChecker {
                 converted_e2.clone().into(),
             );
             TypedExp::set_type(sub_exp, common_type)
-        } else if typed_e1.t.is_pointer() && typed_e2.t.is_integer() {
+        } else if typed_e1.t.is_complete_pointer() && typed_e2.t.is_integer() {
             let converted_e2 = convert_to(typed_e2, Type::Long);
             let sub_exp = InnerExp::Binary(
                 BinaryOperator::Subtract,
@@ -378,7 +449,7 @@ impl TypeChecker {
                 converted_e2.clone().into(),
             );
             TypedExp::set_type(sub_exp, typed_e1.t)
-        } else if typed_e1.t.is_pointer() && typed_e1.t == typed_e2.t {
+        } else if typed_e1.t.is_complete_pointer() && typed_e1.t == typed_e2.t {
             let sub_exp = InnerExp::Binary(
                 BinaryOperator::Subtract,
                 typed_e1.clone().into(),
@@ -394,9 +465,7 @@ impl TypeChecker {
         let typed_e1 = self.typecheck_and_convert(e1);
         let typed_e2 = self.typecheck_and_convert(e2);
 
-        if typed_e1.t.is_pointer() || typed_e2.t.is_pointer() {
-            panic!("multiplicative operations not permitted on pointers");
-        } else {
+        if typed_e1.t.is_arithmetic() && typed_e2.t.is_arithmetic() {
             let common_type = get_common_type(&typed_e1.t, &typed_e2.t);
             let converted_e1 = convert_to(typed_e1, common_type.clone());
             let converted_e2 = convert_to(typed_e2, common_type.clone());
@@ -411,6 +480,8 @@ impl TypeChecker {
                 }
                 op => panic!("Internal error: {:?} isn't a multiplicative operator", op),
             }
+        } else {
+            panic!("Can only multiply arithmetic types");
         }
     }
 
@@ -420,8 +491,10 @@ impl TypeChecker {
 
         let common_type = if typed_e1.t.is_pointer() || typed_e2.t.is_pointer() {
             get_common_pointer_type(&typed_e1, &typed_e2)
-        } else {
+        } else if typed_e1.t.is_arithmetic() && typed_e2.t.is_arithmetic() {
             get_common_type(&typed_e1.t, &typed_e2.t)
+        } else {
+            panic!("Invalid operands for equality");
         };
 
         let converted_e1 = convert_to(typed_e1, common_type.clone());
@@ -435,22 +508,22 @@ impl TypeChecker {
         let typed_e1 = self.typecheck_exp(e1);
         let typed_e2 = self.typecheck_exp(e2);
 
-        // promote both operands from character types to int
-        let typed_e1 = if typed_e1.t.is_character() {
-            convert_to(typed_e1, Type::Int)
-        } else {
-            typed_e1
-        };
-
-        let typed_e2 = if typed_e2.t.is_character() {
-            convert_to(typed_e2, Type::Int)
-        } else {
-            typed_e2
-        };
-
         if !(typed_e1.get_type().is_integer() && typed_e2.get_type().is_integer()) {
             panic!("Both operands of bit shift operation must be integers");
         } else {
+            // promote both operands from character types to int
+            let typed_e1 = if typed_e1.t.is_character() {
+                convert_to(typed_e1, Type::Int)
+            } else {
+                typed_e1
+            };
+
+            let typed_e2 = if typed_e2.t.is_character() {
+                convert_to(typed_e2, Type::Int)
+            } else {
+                typed_e2
+            };
+
             // Don't perform usual arithmetic conversions; results has type of left operand
             let typed_binop =
                 InnerExp::Binary(op.clone(), typed_e1.clone().into(), typed_e2.into());
@@ -532,14 +605,14 @@ impl TypeChecker {
                 }
                 // *= and /= only support arithmetic types
                 BinaryOperator::Multiply | BinaryOperator::Divide
-                    if lhs_type.is_pointer() || rhs_type.is_pointer() =>
+                    if !lhs_type.is_arithmetic() || !rhs_type.is_arithmetic() =>
                 {
-                    panic!("Operator {:?} does not support pointer operands", op)
+                    panic!("Operator {:?} only supports arithmetic operands", op)
                 }
                 // += and -= require either two arithmetic operators, or pointer on LHS and integer on RHS
                 BinaryOperator::Add | BinaryOperator::Subtract
                     if !((rhs_type.is_arithmetic() && lhs_type.is_arithmetic())
-                        || (lhs_type.is_pointer() && rhs_type.is_integer())) =>
+                        || (lhs_type.is_complete_pointer() && rhs_type.is_integer())) =>
                 {
                     panic!("Invalid types for +=/-= {:?}, {:?}", lhs, rhs)
                 }
@@ -589,24 +662,28 @@ impl TypeChecker {
         then_result: &Exp,
         else_result: &Exp,
     ) -> TypedExp {
-        let typed_condition = self.typecheck_exp(condition);
-        let typed_then = self.typecheck_exp(then_result);
-        let typed_else = self.typecheck_exp(else_result);
+        let typed_condition = self.typecheck_scalar(condition);
+        let typed_then = self.typecheck_and_convert(then_result);
+        let typed_else = self.typecheck_and_convert(else_result);
 
-        let common_type = if typed_then.t.is_pointer() || typed_else.t.is_pointer() {
+        let result_type = if typed_then.t == Type::Void && typed_else.t == Type::Void {
+            Type::Void
+        } else if typed_then.t.is_pointer() || typed_else.t.is_pointer() {
             get_common_pointer_type(&typed_then, &typed_else)
-        } else {
+        } else if typed_then.t.is_arithmetic() && typed_else.t.is_arithmetic() {
             get_common_type(&typed_then.t, &typed_else.t)
+        } else {
+            panic!("Invalid operands for conditional");
         };
 
-        let converted_then = convert_to(typed_then, common_type.clone());
-        let converted_else = convert_to(typed_else, common_type.clone());
+        let converted_then = convert_to(typed_then, result_type.clone());
+        let converted_else = convert_to(typed_else, result_type.clone());
         let conditional_exp = InnerExp::Conditional {
             condition: typed_condition.into(),
             then_result: converted_then.into(),
             else_result: converted_else.into(),
         };
-        TypedExp::set_type(conditional_exp, common_type)
+        TypedExp::set_type(conditional_exp, result_type)
     }
 
     fn typecheck_fun_call(&self, f: &str, args: &[Exp]) -> TypedExp {
@@ -644,11 +721,15 @@ impl TypeChecker {
     fn typecheck_dereference(&self, inner: &Exp) -> TypedExp {
         let typed_inner = self.typecheck_and_convert(inner);
 
-        if let Type::Pointer(referenced_t) = typed_inner.get_type() {
-            let deref_exp = InnerExp::Dereference(typed_inner.into());
-            TypedExp::set_type(deref_exp, *referenced_t)
-        } else {
-            panic!("Tried to dereference non-ponter {:?}", inner)
+        match typed_inner.get_type() {
+            Type::Pointer(referenced_t) if *referenced_t == Type::Void => {
+                panic!("Can't dereference pointer to void")
+            }
+            Type::Pointer(referenced_t) => {
+                let deref_exp = InnerExp::Dereference(typed_inner.into());
+                TypedExp::set_type(deref_exp, *referenced_t)
+            }
+            _ => panic!("Tried to dereference non-ponter {:?}", inner),
         }
     }
 
@@ -669,13 +750,13 @@ impl TypeChecker {
         let typed_e2 = self.typecheck_and_convert(e2);
 
         let (ptr_type, converted_e1, converted_e2) =
-            if typed_e1.t.is_pointer() && typed_e2.t.is_integer() {
+            if typed_e1.t.is_complete_pointer() && typed_e2.t.is_integer() {
                 (
                     typed_e1.clone().t,
                     typed_e1,
                     convert_to(typed_e2, Type::Long),
                 )
-            } else if typed_e2.t.is_pointer() && typed_e1.t.is_integer() {
+            } else if typed_e2.t.is_complete_pointer() && typed_e1.t.is_integer() {
                 (
                     typed_e2.clone().t,
                     convert_to(typed_e1, Type::Long),
@@ -696,6 +777,26 @@ impl TypeChecker {
             index: Box::new(converted_e2),
         };
         TypedExp::set_type(subscript_exp, result_type)
+    }
+
+    fn typecheck_size_of_t(&self, t: &Type) -> TypedExp {
+        validate_type(t);
+        if t.is_complete() {
+            let sizeof_exp = InnerExp::SizeOfT(t.clone());
+            TypedExp::set_type(sizeof_exp, Type::ULong)
+        } else {
+            panic!("Can't apply sizeof to incomplete type {:?}", t)
+        }
+    }
+
+    fn typecheck_size_of(&self, inner: &Exp) -> TypedExp {
+        let typed_inner = self.typecheck_exp(inner);
+        if typed_inner.t.is_complete() {
+            let sizeof_exp = InnerExp::SizeOf(Box::new(typed_inner));
+            TypedExp::set_type(sizeof_exp, Type::ULong)
+        } else {
+            panic!("Can't apply sizeof to incomplete type {:?}", inner)
+        }
     }
 
     fn typecheck_and_convert(&self, e: &Exp) -> TypedExp {
@@ -871,9 +972,21 @@ impl TypeChecker {
         statement: &Statement<Initializer, Exp>,
     ) -> Statement<TypedInitializer, TypedExp> {
         match statement {
-            Statement::Return(e) => {
-                let typed_e = self.typecheck_and_convert(e);
-                Statement::Return(convert_by_assignment(typed_e, ret_type.clone()))
+            Statement::Return(Some(e)) => {
+                if ret_type == &Type::Void {
+                    panic!("function with void return type cannot return a value");
+                } else {
+                    let typed_e =
+                        convert_by_assignment(self.typecheck_and_convert(e), ret_type.clone());
+                    Statement::Return(Some(typed_e))
+                }
+            }
+            Statement::Return(None) => {
+                if ret_type == &Type::Void {
+                    Statement::Return(None)
+                } else {
+                    panic!("Function with non-void return type must return a value")
+                }
             }
             Statement::Expression(e) => Statement::Expression(self.typecheck_and_convert(e)),
             Statement::If {
@@ -881,7 +994,7 @@ impl TypeChecker {
                 then_clause,
                 else_clause,
             } => Statement::If {
-                condition: self.typecheck_and_convert(condition),
+                condition: self.typecheck_scalar(condition),
                 then_clause: self.typecheck_statement(&ret_type, &then_clause).into(),
                 else_clause: else_clause
                     .as_ref()
@@ -914,16 +1027,16 @@ impl TypeChecker {
             } => {
                 let typed_control = self.typecheck_and_convert(control);
 
-                // Perform integer type promotions on switch control expression
-                let typed_control = if typed_control.t.is_character() {
-                    convert_to(typed_control, Type::Int)
-                } else {
-                    typed_control
-                };
-
                 if !typed_control.get_type().is_integer() {
                     panic!("Switch control expression must have integer type");
                 } else {
+                    // Perform integer type promotions on switch control expression
+                    let typed_control = if typed_control.t.is_character() {
+                        convert_to(typed_control, Type::Int)
+                    } else {
+                        typed_control
+                    };
+
                     Statement::Switch {
                         control: typed_control,
                         body: self.typecheck_statement(ret_type, &body).into(),
@@ -940,7 +1053,7 @@ impl TypeChecker {
                 body,
                 id,
             } => Statement::While {
-                condition: self.typecheck_and_convert(condition),
+                condition: self.typecheck_scalar(condition),
                 body: self.typecheck_statement(&ret_type, body).into(),
                 id: id.clone(),
             },
@@ -950,7 +1063,7 @@ impl TypeChecker {
                 id,
             } => Statement::DoWhile {
                 body: self.typecheck_statement(&ret_type, body).into(),
-                condition: self.typecheck_and_convert(condition),
+                condition: self.typecheck_scalar(condition),
                 id: id.clone(),
             },
             Statement::For {
@@ -974,7 +1087,7 @@ impl TypeChecker {
                 };
                 Statement::For {
                     init: typechecked_for_init,
-                    condition: Option::map(condition.as_ref(), |c| self.typecheck_and_convert(c)),
+                    condition: Option::map(condition.as_ref(), |c| self.typecheck_scalar(c)),
                     post: Option::map(post.as_ref(), |p| self.typecheck_and_convert(p)),
                     body: self.typecheck_statement(&ret_type, body).into(),
                     id: id.clone(),
@@ -1007,6 +1120,13 @@ impl TypeChecker {
             init,
             storage_class,
         } = var_decl;
+
+        if var_type == &Type::Void {
+            panic!("No void declarations: {}", name)
+        } else {
+            validate_type(var_type);
+        }
+
         match storage_class {
             Some(StorageClass::Extern) => {
                 if init.is_some() {
@@ -1077,8 +1197,11 @@ impl TypeChecker {
             storage_class,
         } = func_decl;
 
+        validate_type(fun_type);
+
         let adjust_param_type = |t: &Type| match t {
             Type::Array { elem_type, .. } => Type::Pointer(elem_type.clone()),
+            Type::Void => panic!("No void params allowed: {}", name),
             t => t.clone(),
         };
 
@@ -1176,6 +1299,12 @@ impl TypeChecker {
             init,
             storage_class,
         } = var_decl;
+
+        if var_type == &Type::Void {
+            panic!("void variables not allowed: {}", name);
+        } else {
+            validate_type(var_type);
+        }
 
         let default_init = if let Some(StorageClass::Extern) = *storage_class {
             InitialValue::NoInitializer

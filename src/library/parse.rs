@@ -221,6 +221,7 @@ fn is_type_specifier(token: &Token) -> bool {
             | Token::KWUnsigned
             | Token::KWDouble
             | Token::KWChar
+            | Token::KWVoid
     )
 }
 
@@ -355,6 +356,7 @@ impl Parser {
         specifier_list.sort();
 
         match specifier_list.as_slice() {
+            [Token::KWVoid] => return Ok(Type::Void),
             [Token::KWDouble] => return Ok(Type::Double),
             [Token::KWChar] => return Ok(Type::Char),
             [Token::KWChar, Token::KWSigned] => return Ok(Type::SChar),
@@ -381,6 +383,7 @@ impl Parser {
                 if specifier_list.is_empty()
                     || specifier_list.contains(&Token::KWDouble)
                     || specifier_list.contains(&Token::KWChar)
+                    || specifier_list.contains(&Token::KWVoid)
                     || specifier_list.contains(&Token::KWSigned)
                         && specifier_list.contains(&Token::KWUnsigned)
                 {
@@ -549,7 +552,7 @@ impl Parser {
     fn parse_param_list(&mut self) -> Result<Vec<ParamInfo>, String> {
         self.expect(Token::OpenParen)?;
 
-        let params = if let Token::KWVoid = self.tokens.peek()? {
+        let params = if let [Token::KWVoid, Token::CloseParen] = self.tokens.npeek(2) {
             self.tokens.take_token()?;
             vec![]
         } else {
@@ -641,11 +644,22 @@ impl Parser {
             }
             other => panic!("Expected an abstract direct declarator, found {:?}", other),
         }
+    }
 
-        // self.expect(Token::OpenParen)?;
-        // let decl = self.parse_abstract_declarator()?;
-        // self.expect(Token::CloseParen)?;
-        // Ok(decl)
+    // <type-name> ::= { <type-specifier> }+ [ <abstract-declarator> ]
+    fn parse_type_name(&mut self) -> Result<Type, String> {
+        let type_specifiers = self.parse_type_specifier_list()?;
+        let base_type = self.parse_type(type_specifiers)?;
+        /* check for optional abstract declarator
+         * note that <type-name> is always followed by close paren,
+         * although that's not part of grammar rule
+         */
+        if let Token::CloseParen = self.tokens.peek()? {
+            Ok(base_type)
+        } else {
+            let abstract_decl = self.parse_abstract_declarator()?;
+            Ok(abstract_decl.process(base_type))
+        }
     }
 
     // <unop> ::= "-" | "~" | "!" | "++" | "--"
@@ -703,7 +717,10 @@ impl Parser {
         Ok(result)
     }
 
-    // <primary-exp> ::= <const> | <identifier> | <identifier> "(" [ <argument-list ] ")" | "(" <exp> ")"
+    /*
+        <primary-exp> ::= <const> | <identifier> | "(" <exp> ")" | { <string> }+
+                        | <identifier> "(" [ <argument-list ] ")"
+    */
     fn parse_primary_expression(&mut self) -> Result<Exp, String> {
         let next_token = self.tokens.peek()?;
         match next_token {
@@ -732,7 +749,7 @@ impl Parser {
                 let string_exp = self.parse_string_literals()?;
                 Ok(Exp::String(string_exp))
             }
-            // cast or parenthesized expression
+            // parenthesized expression. NOTE: we know this isn't a case because we would have already consumed that in parse_cast_expression
             Token::OpenParen => {
                 // Consume open paren
                 self.tokens.take_token()?;
@@ -775,9 +792,35 @@ impl Parser {
         }
     }
 
-    // <factor> ::= <unop> <factor> | "(" { <type-specifier> }+ ")" | factor | <postfix-exp>
-    fn parse_factor(&mut self) -> Result<Exp, String> {
-        let next_tokens = self.tokens.npeek(2);
+    /* <cast-exp> ::= "(" <type-name> ")" <cast-exp>
+                   | <unary-exp>
+    */
+    fn parse_cast_expression(&mut self) -> Result<Exp, String> {
+        match self.tokens.npeek(2) {
+            [Token::OpenParen, t] if is_type_specifier(t) => {
+                // this is a case expression
+                // consume open paren
+                self.tokens.take_token()?;
+                let target_type = self.parse_type_name()?;
+                self.expect(Token::CloseParen)?;
+                let inner_exp = self.parse_cast_expression()?;
+                Ok(Exp::Cast {
+                    target_type,
+                    e: Box::new(inner_exp),
+                })
+            }
+            _ => self.parse_unary_expression(),
+        }
+    }
+
+    /*
+       <unary-exp> ::= <unop> <cast-exp>
+                   | "sizeof" <unary-exp>
+                   | "sizeof" "(" <type-name> ")"
+                   | <postfix-exp>
+    */
+    fn parse_unary_expression(&mut self) -> Result<Exp, String> {
+        let next_tokens = self.tokens.npeek(3);
         match next_tokens {
             // unary expression
             [
@@ -786,40 +829,35 @@ impl Parser {
                 | Token::Bang
                 | Token::DoublePlus
                 | Token::DoubleHyphen,
-                _,
+                ..,
             ] => {
                 let operator = self.parse_unop()?;
-                let inner_exp = self.parse_factor()?;
+                let inner_exp = self.parse_cast_expression()?;
                 Ok(Exp::Unary(operator, Box::new(inner_exp)))
             }
-            [Token::Star, _] => {
+            [Token::Star, ..] => {
                 self.tokens.take_token()?;
-                let inner_exp = self.parse_factor()?;
+                let inner_exp = self.parse_cast_expression()?;
                 Ok(Exp::Dereference(Box::new(inner_exp)))
             }
-            [Token::Ampersand, _] => {
+            [Token::Ampersand, ..] => {
                 self.tokens.take_token()?;
-                let inner_exp = self.parse_factor()?;
+                let inner_exp = self.parse_cast_expression()?;
                 Ok(Exp::AddrOf(Box::new(inner_exp)))
             }
-            [Token::OpenParen, t] if is_type_specifier(t) => {
-                // It's a cast - consume open paren, then parse type specifiers
+            [Token::KWSizeOf, Token::OpenParen, t] if is_type_specifier(t) => {
+                // size of a typename
                 self.tokens.take_token()?;
-                let type_specifiers = self.parse_type_specifier_list()?;
-                let base_type = self.parse_type(type_specifiers)?;
-                // check for optional abstract declarator
-                let target_type = if let Token::CloseParen = self.tokens.peek()? {
-                    base_type
-                } else {
-                    let abstract_decl = self.parse_abstract_declarator()?;
-                    abstract_decl.process(base_type)
-                };
+                self.tokens.take_token()?;
+                let target_type = self.parse_type_name()?;
                 self.expect(Token::CloseParen)?;
-                let inner_exp = self.parse_factor()?;
-                Ok(Exp::Cast {
-                    target_type,
-                    e: Box::new(inner_exp),
-                })
+                Ok(Exp::SizeOfT(target_type))
+            }
+            [Token::KWSizeOf, ..] => {
+                // size of an expression
+                self.tokens.take_token()?;
+                let inner_exp = self.parse_unary_expression()?;
+                Ok(Exp::SizeOf(Box::new(inner_exp)))
             }
             _ => self.parse_postfix_exp(),
         }
@@ -861,7 +899,7 @@ impl Parser {
 
     // <exp> ::= <factor> | <exp> <binop> <exp> | <exp> "?" <exp> ":" <exp>
     fn parse_expression(&mut self, min_prec: i8) -> Result<Exp, String> {
-        let mut left = self.parse_factor()?;
+        let mut left = self.parse_cast_expression()?;
         let mut next_token = self.tokens.peek()?.clone();
 
         while let Some(prec) = get_precedence(&next_token) {
@@ -942,7 +980,7 @@ impl Parser {
         }
     }
 
-    // <statement> ::= "return" <exp> ";"
+    // <statement> ::= "return" [ <exp> ] ";"
     //              | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
     //              | <label> ":" <statement> ";"
     //              | "goto" <label> ";"
@@ -977,8 +1015,7 @@ impl Parser {
             [Token::KWReturn, _] => {
                 // consume return keyword
                 self.tokens.take_token()?;
-                let exp = self.parse_expression(0)?;
-                self.expect(Token::Semicolon)?;
+                let exp = self.parse_optional_expression(Token::Semicolon)?;
                 Ok(Statement::Return(exp))
             }
             [Token::KWGoto, _] => {
@@ -1305,7 +1342,7 @@ mod tests {
         ]);
         assert_eq!(
             parser.parse_statement().unwrap(),
-            Statement::Return(Exp::Constant(T::ConstInt(4)))
+            Statement::Return(Some(Exp::Constant(T::ConstInt(4))))
         );
     }
 
@@ -1329,7 +1366,7 @@ mod tests {
             parser.parse_statement().unwrap(),
             Statement::LabelledStatement(
                 "label".to_string(),
-                Box::new(Statement::Return(Exp::Constant(T::ConstInt(42)))),
+                Box::new(Statement::Return(Some(Exp::Constant(T::ConstInt(42))))),
             )
         );
     }

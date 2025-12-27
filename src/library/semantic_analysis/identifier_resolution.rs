@@ -110,8 +110,9 @@ impl Resolver {
                 ptr: self.resolve_exp(ptr).into(),
                 index: self.resolve_exp(index).into(),
             },
-            // Nothing to do for constant
-            Exp::Constant(_) | Exp::String(_) => exp.clone(),
+            Exp::SizeOf(e) => Exp::SizeOf(Box::new(self.resolve_exp(e))),
+            // Nothing to do for expressions without subexpressions
+            Exp::Constant(_) | Exp::String(_) | Exp::SizeOfT(_) => exp.clone(),
         }
     }
 
@@ -206,7 +207,10 @@ impl Resolver {
         statement: Statement<Initializer, Exp>,
     ) -> Statement<Initializer, Exp> {
         match statement {
-            Statement::Return(e) => Statement::Return(self.resolve_exp(&e)),
+            Statement::Return(e) => {
+                let resolved_e = e.map(|e| self.resolve_exp(&e));
+                Statement::Return(resolved_e)
+            }
             Statement::Expression(e) => Statement::Expression(self.resolve_exp(&e)),
             Statement::If {
                 condition,

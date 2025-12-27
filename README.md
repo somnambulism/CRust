@@ -101,3 +101,4 @@ the source code into C...
 - Arrays
 - Characters
 - Strings
+- `void` type and `sizeof`

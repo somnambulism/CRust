@@ -36,6 +36,7 @@ pub enum Token {
     KWDefault,
     KWStatic,
     KWExtern,
+    KWSizeOf,
 
     // Punctuation
     OpenParen,

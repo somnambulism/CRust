@@ -9,6 +9,7 @@ pub enum Type {
     ULong,
     Double,
     Pointer(Box<Type>),
+    Void,
     Array {
         elem_type: Box<Type>,
         size: i64,
@@ -29,8 +30,8 @@ impl Type {
                 ref elem_type,
                 size,
             } => size * elem_type.get_size(),
-            &Type::FunType { .. } => {
-                panic!("Internal error: function type doesn't have size.")
+            &Type::FunType { .. } | &Type::Void => {
+                panic!("Internal error: type doesn't have size: {:?}.", self)
             }
         }
     }
@@ -41,8 +42,8 @@ impl Type {
             &Type::Int | &Type::UInt => 4,
             &Type::Long | &Type::ULong | &Type::Double | &Type::Pointer(_) => 8,
             &Type::Array { ref elem_type, .. } => elem_type.get_alignment(),
-            &Type::FunType { .. } => {
-                panic!("Internal error: function type doesn't have alignment.")
+            &Type::FunType { .. } | &Type::Void => {
+                panic!("Internal error: type doesn't have alignment: {:?}.", self)
             }
         }
     }
@@ -51,7 +52,7 @@ impl Type {
         match self {
             &Type::Int | &Type::Long | &Type::Char | &Type::SChar => true,
             &Type::UInt | &Type::ULong | &Type::Pointer(_) | &Type::UChar => false,
-            &Type::Double | &Type::FunType { .. } | &Type::Array { .. } => {
+            &Type::Double | &Type::FunType { .. } | &Type::Array { .. } | &Type::Void => {
                 panic!(
                     "Internal error: signedness doesn't make sense for type {:?}",
                     self
@@ -73,7 +74,11 @@ impl Type {
             | Type::UInt
             | Type::Long
             | Type::ULong => true,
-            Type::Double | Type::Array { .. } | Type::Pointer(_) | Type::FunType { .. } => false,
+            Type::Double
+            | Type::Array { .. }
+            | Type::Pointer(_)
+            | Type::FunType { .. }
+            | Type::Void => false,
         }
     }
 
@@ -95,7 +100,34 @@ impl Type {
             | Type::UChar
             | Type::SChar
             | Type::Double => true,
-            Type::FunType { .. } | Type::Pointer(..) | Type::Array { .. } => false,
+            Type::FunType { .. } | Type::Pointer(..) | Type::Array { .. } | Type::Void => false,
+        }
+    }
+
+    pub fn is_scalar(&self) -> bool {
+        match self {
+            Type::Array { .. } | Type::Void | Type::FunType { .. } => false,
+            Type::Int
+            | Type::UInt
+            | Type::Long
+            | Type::ULong
+            | Type::Char
+            | Type::UChar
+            | Type::SChar
+            | Type::Double
+            | Type::Pointer(_) => true,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        !matches!(self, Type::Void)
+    }
+
+    pub fn is_complete_pointer(&self) -> bool {
+        if let Type::Pointer(t) = self {
+            t.is_complete()
+        } else {
+            false
         }
     }
 }

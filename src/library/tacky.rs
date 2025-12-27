@@ -35,7 +35,7 @@ pub enum TackyVal {
 
 #[derive(Debug, PartialEq)]
 pub enum Instruction {
-    Return(TackyVal),
+    Return(Option<TackyVal>),
     SignExtend {
         src: TackyVal,
         dst: TackyVal,
@@ -109,7 +109,7 @@ pub enum Instruction {
     FunCall {
         f: String,
         args: Vec<TackyVal>,
-        dst: TackyVal,
+        dst: Option<TackyVal>,
     },
 }
 

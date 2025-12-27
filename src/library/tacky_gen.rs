@@ -30,6 +30,11 @@ fn continue_label(label: String) -> String {
     format!("continue.{}", label)
 }
 
+// use this as the result of void expressions that don't return a result
+fn dummy_operand() -> TackyVal {
+    TackyVal::Constant(T::ConstInt(0))
+}
+
 fn mk_const(t: &Type, i: i64) -> T {
     let as_int = T::ConstInt(i as i32);
     const_convert(t, &as_int)
@@ -130,6 +135,11 @@ fn emit_string_init(dst: &str, mut offset: i64, mut s: &[u8]) -> Vec<Instruction
     res
 }
 
+fn eval_size(t: &Type) -> TackyVal {
+    let size = t.get_size();
+    TackyVal::Constant(T::ConstULong(size.try_into().unwrap()))
+}
+
 // An expression result that may or may not be lvalue converted
 #[derive(Debug, PartialEq, Clone)]
 enum ExpResult {
@@ -219,6 +229,8 @@ impl TackyGen {
             InnerExp::Dereference(inner) => self.emit_dereference(*inner),
             InnerExp::AddrOf(inner) => self.emit_addr_of(&t, *inner),
             InnerExp::Subscript { ptr, index } => self.emit_subscript(t, *ptr, *index),
+            InnerExp::SizeOfT(t) => (vec![], ExpResult::PlainOperand(eval_size(&t))),
+            InnerExp::SizeOf(inner) => (vec![], ExpResult::PlainOperand(eval_size(&inner.t))),
         }
     }
 
@@ -342,7 +354,7 @@ impl TackyGen {
         let (mut eval_inner, result) = self.emit_tacky_and_convert(inner.clone());
         let src_type = inner.get_type();
 
-        if src_type == target_type {
+        if src_type == target_type || target_type == Type::Void {
             (eval_inner, ExpResult::PlainOperand(result))
         } else {
             let dst_name = self.create_tmp(target_type.clone());
@@ -749,27 +761,44 @@ impl TackyGen {
         let (eval_v2, v2) = self.emit_tacky_and_convert(e2);
         let e2_label = make_label("conditional_else");
         let end_label = make_label("conditional_end");
-        let dst_name = self.create_tmp(t);
-        let dst = TackyVal::Var(dst_name);
+
+        let dst = if &t == &Type::Void {
+            dummy_operand()
+        } else {
+            let dst_name = self.create_tmp(t.clone());
+            TackyVal::Var(dst_name)
+        };
+
         let mut instructions = eval_cond;
         instructions.push(Instruction::JumpIfZero(c, e2_label.clone()));
         instructions.extend(eval_v1);
-        instructions.extend(vec![
-            Instruction::Copy {
-                src: v1,
-                dst: dst.clone(),
-            },
-            Instruction::Jump(end_label.clone()),
-            Instruction::Label(e2_label),
-        ]);
-        instructions.extend(eval_v2);
-        instructions.extend(vec![
-            Instruction::Copy {
-                src: v2,
-                dst: dst.clone(),
-            },
-            Instruction::Label(end_label),
-        ]);
+
+        if &t == &Type::Void {
+            instructions.extend(vec![
+                Instruction::Jump(end_label.clone()),
+                Instruction::Label(e2_label),
+            ]);
+            instructions.extend(eval_v2);
+            instructions.push(Instruction::Label(end_label));
+        } else {
+            instructions.extend(vec![
+                Instruction::Copy {
+                    src: v1,
+                    dst: dst.clone(),
+                },
+                Instruction::Jump(end_label.clone()),
+                Instruction::Label(e2_label),
+            ]);
+            instructions.extend(eval_v2);
+            instructions.extend(vec![
+                Instruction::Copy {
+                    src: v2,
+                    dst: dst.clone(),
+                },
+                Instruction::Label(end_label),
+            ]);
+        }
+
         (instructions, ExpResult::PlainOperand(dst))
     }
 
@@ -779,8 +808,13 @@ impl TackyGen {
         f: &str,
         args: Vec<TypedExp>,
     ) -> (Vec<Instruction>, ExpResult) {
-        let dst_name = self.create_tmp(t);
-        let dst = TackyVal::Var(dst_name);
+        let dst = if t == Type::Void {
+            None
+        } else {
+            let dst_name = self.create_tmp(t);
+            Some(TackyVal::Var(dst_name))
+        };
+
         let (arg_instructions, arg_vals): (Vec<Vec<Instruction>>, Vec<TackyVal>) = args
             .into_iter()
             .map(|arg| self.emit_tacky_and_convert(arg))
@@ -791,7 +825,8 @@ impl TackyGen {
             args: arg_vals,
             dst: dst.clone(),
         });
-        (instructions, ExpResult::PlainOperand(dst))
+        let dst_val = dst.unwrap_or_else(dummy_operand);
+        (instructions, ExpResult::PlainOperand(dst_val))
     }
 
     fn emit_dereference(&mut self, inner: TypedExp) -> (Vec<Instruction>, ExpResult) {
@@ -877,7 +912,10 @@ impl TackyGen {
     ) -> Vec<Instruction> {
         match stmt {
             Statement::Return(e) => {
-                let (mut eval_exp, v) = self.emit_tacky_and_convert(e);
+                let (mut eval_exp, v) = match e.map(|e| self.emit_tacky_and_convert(e)) {
+                    Some((instrs, result)) => (instrs, Some(result)),
+                    None => (vec![], None),
+                };
                 eval_exp.push(Instruction::Return(v));
                 eval_exp
             }
@@ -1192,7 +1230,7 @@ impl TackyGen {
                     .into_iter()
                     .flat_map(|item| self.emit_tacky_for_block_item(item))
                     .collect();
-                let extra_return = Instruction::Return(TackyVal::Constant(INT_ZERO));
+                let extra_return = Instruction::Return(Some(TackyVal::Constant(INT_ZERO)));
                 body_instructions.push(extra_return);
                 Some(TopLevel::FunctionDefinition {
                     name,

@@ -72,6 +72,8 @@ pub mod untyped_exp {
             ptr: Box<Exp>,
             index: Box<Exp>,
         },
+        SizeOf(Box<Exp>),
+        SizeOfT(Type),
     }
 
     impl ExpTrait for Exp {}
@@ -136,6 +138,8 @@ pub mod typed_exp {
             ptr: Box<TypedExp>,
             index: Box<TypedExp>,
         },
+        SizeOf(Box<TypedExp>),
+        SizeOfT(Type),
     }
 
     #[derive(Debug, PartialEq, Clone)]
@@ -198,7 +202,7 @@ pub mod block_items {
 
     #[derive(Debug, PartialEq)]
     pub enum Statement<Init: InitTrait, Exp: ExpTrait> {
-        Return(Exp),
+        Return(Option<Exp>),
         Expression(Exp),
         If {
             condition: Exp,
